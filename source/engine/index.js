@@ -188,7 +188,15 @@ export function createEngine(platform) {
       max: MAX_TOPICS });
   }
 
-  async function createTopic(E, body) {
+  // Une seule création à la fois par texte : un second appui (ou un écran rouvert) reçoit le même résultat.
+  const creating = new Map();
+  function createTopic(E, body) {
+    const key = String(body?.text || '').trim().toLowerCase();
+    if (!creating.has(key)) creating.set(key, doCreateTopic(E, body).finally(() => creating.delete(key)));
+    return creating.get(key);
+  }
+
+  async function doCreateTopic(E, body) {
     const text = String(body?.text || '').trim().slice(0, 80);
     if (text.length < 2) return fail('Tapez au moins deux caractères.');
     const topics = await loadTopics(E);
@@ -198,11 +206,16 @@ export function createEngine(platform) {
     try { raw = await callAI({ ...E, aiTimeout: 45000 }, TOPIC_SYSTEM, topicUserPrompt(text)); }
     catch (e) { return fail(`L'IA n'a pas pu préparer ce sujet : ${e.message}`, 502); }
     const t = sanitizeConfig(raw, text);
-    let id = t.id, n = 2;
-    while (topics.some(x => x.id === id)) id = `${t.id}-${n++}`;
     const now = Date.now();
-    await E.DB.prepare('INSERT INTO topics (id, name, type, config, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, t.name, t.type, JSON.stringify(t.config), topics.length, now, now).run();
+    // Liste relue après la réponse de l'IA (qui prend du temps) : un sujet identique vient peut-être d'être créé.
+    const current = await loadTopics(E);
+    const twin = current.find(x => x.name.toLowerCase() === t.name.toLowerCase() && now - (x.created_at || 0) < 15 * 60000);
+    if (twin) return ok({ topic: { id: twin.id, name: twin.name, type: twin.type, ...twin.config }, existing: true });
+    if (current.length >= MAX_TOPICS) return fail(`Vous suivez déjà ${MAX_TOPICS} sujets : supprimez-en un d'abord.`);
+    let id = t.id, n = 2;
+    while (current.some(x => x.id === id)) id = `${t.id}-${n++}`;
+    await E.DB.prepare('INSERT OR IGNORE INTO topics (id, name, type, config, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, t.name, t.type, JSON.stringify(t.config), current.length, now, now).run();
     return ok({ topic: { id, name: t.name, type: t.type, ...t.config } });
   }
 

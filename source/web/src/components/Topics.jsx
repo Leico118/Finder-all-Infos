@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { IconChevron } from './Icons.jsx';
 import { timeAgo } from '../util.js';
@@ -88,25 +88,40 @@ function TopicRow({ t, onChanged }) {
   );
 }
 
+// Création en cours, conservée si l'écran Réglages est quitté puis rouvert pendant que l'IA travaille.
+let pendingAdd = null;
+
 export default function Topics({ onAdded, autoFocus }) {
   const [data, setData] = useState(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const load = () => api.topics().then(setData).catch(e => setMsg(e.message));
-  useEffect(() => { load(); }, []);
+  const alive = useRef(true);
+  const load = () => api.topics().then(d => alive.current && setData(d)).catch(e => alive.current && setMsg(e.message));
 
-  async function add(value = text) {
-    if (value.trim().length < 2) return;
+  async function follow(promise) {
     setBusy(true); setMsg('L\'IA prépare les mots-clés et les recherches…');
     try {
-      const r = await api.addTopic(value.trim());
+      const r = await promise;
+      if (!alive.current) return;
       setText('');
-      setMsg(`✔ « ${r.topic.name} » ajouté (${r.topic.type === 'product' ? 'produit, avec fiche technique' : 'sujet général'}). La première collecte démarre.`);
-      await load();
+      setMsg(`✔ « ${r.topic.name} » ${r.existing ? 'est bien dans vos sujets' : `ajouté (${r.topic.type === 'product' ? 'produit, avec fiche technique' : 'sujet général'}). Appuyez sur « Actualiser » pour lancer sa première recherche`}.`);
       onAdded?.(r.topic);
-    } catch (e) { setMsg(`✖ ${e.message}`); }
-    finally { setBusy(false); }
+    } catch (e) { if (alive.current) setMsg(`✖ ${e.message}`); }
+    finally { if (alive.current) { setBusy(false); load(); } }
+  }
+
+  useEffect(() => {
+    alive.current = true;
+    load();
+    if (pendingAdd) follow(pendingAdd);
+    return () => { alive.current = false; };
+  }, []);
+
+  function add(value = text) {
+    if (value.trim().length < 2 || pendingAdd) return;
+    pendingAdd = api.addTopic(value.trim()).finally(() => { pendingAdd = null; });
+    follow(pendingAdd);
   }
 
   const full = data && data.topics.length >= data.max;

@@ -110,6 +110,13 @@ r = await api('PUT', '/api/topics/voitures-byd', { match: 'BYD, 比亚迪, Denza
 assert(r.status === 200 && (await api('GET', '/api/topics')).data.topics.find(t => t.id === 'voitures-byd').match.includes('Denza'), 'modification des mots-clés');
 r = await api('DELETE', '/api/topics/voitures-byd');
 assert(r.status === 200 && bridge.db.prepare("SELECT COUNT(*) n FROM cards WHERE topic_id = 'voitures-byd'").get().n === 0, 'suppression d\'un sujet et de ses cartes');
+// Création en double (second appui, écran rouvert) : un seul sujet, pas d'erreur
+setTopicResponse({ ...topicResponse, name: 'Nintendo Switch 3' });
+const [c1, c2] = await Promise.all([api('POST', '/api/topics', { text: 'Nintendo' }), api('POST', '/api/topics', { text: 'nintendo' })]);
+const c3 = await api('POST', '/api/topics', { text: 'Nintendo Switch' });
+const nN = bridge.db.prepare("SELECT COUNT(*) n FROM topics WHERE name = 'Nintendo Switch 3'").get().n;
+assert(c1.status === 200 && c2.status === 200 && c3.status === 200 && c3.data.existing && nN === 1, `création en double : un seul sujet, aucune erreur (${c1.status}/${c2.status}/${c3.status}, ${nN})`);
+await api('DELETE', `/api/topics/${c1.data.topic.id}`);
 const st = (await api('GET', '/api/status')).data;
 assert(st.source_groups.length === 2 && st.source_groups[0].sources.length >= 6 && st.next_collect > now, 'état des sources et prochaine collecte');
 
