@@ -23,7 +23,7 @@ import java.util.concurrent.Executors;
 public final class RadarBridge {
     public interface DoneListener { void onDone(String json); }
 
-    private static final ExecutorService NET = Executors.newFixedThreadPool(6);
+    private static final ExecutorService NET = Executors.newFixedThreadPool(10);
     private final Context ctx;
     private final Activity activity;          // null dans la tâche de fond
     private final WebView web;

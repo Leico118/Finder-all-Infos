@@ -283,14 +283,14 @@ export function createEngine(platform) {
     return ok(result);
   }
 
-  async function refresh(E, q) {
+  async function refresh(E, q, ctx = {}) {
     const mode = ['auto', 'manual', 'background'].includes(q.get('mode')) ? q.get('mode') : 'manual';
     if (mode === 'background' && !E.AUTO_COLLECT) return ok({ skipped: true, reason: 'Collecte automatique désactivée dans les réglages.' });
     if (!(await getMeta(E, 'legacy_import'))) {
       try { await importLegacy(E); } catch (e) { /* nouvel essai à la prochaine passe */ }
     }
     const budget = mode === 'background' ? 8 * 60000 : 75000;
-    const r = await tick(E, { mode, budgetMs: Number(q.get('budget')) || budget });
+    const r = await tick(E, { mode, budgetMs: Number(q.get('budget')) || budget, onProgress: ctx.onProgress });
     return ok(r, r.skipped ? 409 : 200);
   }
 
@@ -315,7 +315,8 @@ export function createEngine(platform) {
   }
 
   // ---------- Routeur ----------
-  async function handle(method, path, body) {
+  // ctx.onProgress (facultatif) : avancement de l'actualisation, pour afficher les cartes au fur et à mesure.
+  async function handle(method, path, body, ctx = {}) {
     const url = new URL(path, 'https://radar.local');
     const p = decodeURIComponent(url.pathname).replace(/\/+$/, '');
     const q = url.searchParams;
@@ -341,7 +342,7 @@ export function createEngine(platform) {
       if (method === 'PUT' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)$/))) return await updateTopic(E, m[1], body);
       if (method === 'DELETE' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)$/))) return await deleteTopic(E, m[1]);
       if (method === 'POST' && p === '/api/setup') return await setup(E, body);
-      if (method === 'POST' && p === '/api/refresh') return await refresh(E, q);
+      if (method === 'POST' && p === '/api/refresh') return await refresh(E, q, ctx);
       if (method === 'GET' && p === '/api/update') return await checkUpdate();
       return fail('Route inconnue', 404);
     } catch (e) {

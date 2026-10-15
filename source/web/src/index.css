@@ -14,6 +14,7 @@
   --animate-rise: rise 0.42s cubic-bezier(0.2, 0.7, 0.2, 1) both;
   --animate-fade: fade 0.3s ease-out both;
   --animate-spin-slow: spin 1s linear infinite;
+  --animate-indeterminate: indeterminate 1.3s ease-in-out infinite;
 
   @keyframes rise {
     from { opacity: 0; transform: translateY(10px); }
@@ -23,6 +24,14 @@
     from { opacity: 0; }
     to { opacity: 1; }
   }
+  @keyframes indeterminate {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(300%); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-indeterminate { animation: none; width: 100%; opacity: 0.5; }
 }
 
 html, body, #root { min-height: 100%; }

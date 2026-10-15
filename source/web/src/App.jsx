@@ -30,6 +30,8 @@ export default function App() {
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState('');
+  const [progress, setProgress] = useState(null);         // avancement en direct de l'actualisation
+  const [fresh, setFresh] = useState(0);                  // cartes arrivées pendant l'actualisation
   const scrollPos = useRef(0);
   const navigatedInApp = useRef(false);
   const syncing = useRef(false);
@@ -49,8 +51,8 @@ export default function App() {
     } catch { /* affiché par la liste */ }
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true);
     try {
       setData(await api.cards(filter, topic));
       setError('');
@@ -100,29 +102,46 @@ export default function App() {
     if (syncing.current) return;
     syncing.current = true;
     setRefreshing(true);
+    setFresh(0);
     let created = 0, updated = 0, fresh = 0, busyTries = 0, lastErr = '';
+    let reloadTimer = null;
+    const reloadSoon = () => {                                 // nouvelles cartes : affichées sans attendre la fin
+      if (reloadTimer) return;
+      reloadTimer = setTimeout(() => { reloadTimer = null; load({ quiet: true }); }, 300);
+    };
     try {
       for (let pass = 1; pass <= 30; pass++) {
-        setRefreshMsg(pass === 1
-          ? (auto ? 'Mise à jour en cours…' : 'Recherche dans toutes les sources de vos sujets…')
-          : `Analyse des articles en attente… (passage ${pass})`);
+        setRefreshMsg('');
+        setProgress({ phase: pass === 1 ? 'start' : 'cards', created, updated, pending: null });
         let r;
+        const base = { created, updated };
         try {
-          r = await api.refresh(auto || pass > 1 ? 'auto' : 'manual');
+          r = await api.refresh(auto || pass > 1 ? 'auto' : 'manual', ev => {
+            if (ev.phase === 'cards') {
+              const c = base.created + (ev.created || 0), u = base.updated + (ev.updated || 0);
+              if (c + u > created + updated) { setFresh(c + u); reloadSoon(); }
+              created = c; updated = u;
+              setProgress(p => ({ ...p, phase: p?.phase === 'collect' || p?.phase === 'web' ? p.phase : 'cards', created: c, updated: u,
+                pending: ev.pending, analyzed: ev.analyzed }));
+            } else {
+              setProgress(p => ({ ...p, ...ev }));
+            }
+          });
         } catch (e) {
-          if (e.status === 409 && busyTries++ < 14) {           // collecte de fond en cours
+          if (e.status === 409 && busyTries++ < 14) {           // autre synchronisation en cours
+            setProgress(null);
             setRefreshMsg('Une autre synchronisation se termine, nouvel essai dans 20 secondes…');
             await wait(20000); pass--; continue;
           }
           throw e;
         }
-        created += r.created || 0; updated += r.updated || 0;
+        created = base.created + (r.created || 0); updated = base.updated + (r.updated || 0);
         fresh += (r.sources || []).reduce((a, s) => a + (s.inserted || 0), 0);
         lastErr = (r.errors || []).join(' ');
-        await load();
+        await load({ quiet: true });
         if (r.collected) loadTopics();
         if (!r.pending) break;
-        setRefreshMsg(`${r.pending} article${r.pending > 1 ? 's' : ''} en attente d'analyse…`);
+        setProgress(p => ({ ...p, phase: 'cards', pending: r.pending }));
         if (!r.analyzed && lastErr) break;
       }
       const parts = [];
@@ -133,8 +152,10 @@ export default function App() {
     } catch (e) {
       setRefreshMsg(auto && e.status === 0 ? '' : e.message);
     } finally {
+      if (reloadTimer) clearTimeout(reloadTimer);
       syncing.current = false;
       setRefreshing(false);
+      setProgress(null);
       setTimeout(() => setRefreshMsg(''), 8000);
     }
   }
@@ -159,13 +180,14 @@ export default function App() {
     <div className="mx-auto min-h-screen max-w-xl">
       {route.view === 'feed' && (
         <Feed topics={topics} topic={topic} setTopic={setTopic} filter={filter} setFilter={setFilter} data={data} loading={loading}
-          error={error} refreshing={refreshing} refreshMsg={refreshMsg} onRefresh={() => refresh()} onOpen={id => go(`#/carte/${id}`)}
+          error={error} refreshing={refreshing} refreshMsg={refreshMsg} progress={progress} fresh={fresh}
+          onRefresh={() => refresh()} onOpen={id => go(`#/carte/${id}`)}
           onReadAll={readAll} />
       )}
       {route.view === 'card' && <CardDetail id={route.id} onBack={back} onRead={() => load()} />}
       {route.view === 'specs' && <Specs onOpenCard={id => go(`#/carte/${id}`)} topic={currentTopic?.type === 'product' ? topic : ''} />}
       {route.view === 'settings' && (
-        <Settings onRefresh={() => refresh()} refreshing={refreshing} refreshMsg={refreshMsg}
+        <Settings onRefresh={() => refresh()} refreshing={refreshing} refreshMsg={refreshMsg} progress={progress}
           onTopicsChanged={() => { loadTopics(); load(); }} focusTopics={route.topics} />
       )}
 

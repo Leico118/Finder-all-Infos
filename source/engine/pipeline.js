@@ -171,13 +171,21 @@ async function collect(env, topics, now, manual, stats) {
     const gdeltFeeds = feeds.filter(f => f.id.endsWith(':gdelt'));
     const otherFeeds = feeds.filter(f => !f.id.endsWith(':gdelt'));
 
+    const total = otherFeeds.length + (readSites ? SITE_FEEDS.length : 0) + gdeltFeeds.length;
+    let done = 0;
+    const tracked = async (f, list) => {
+      const r = await collectFeed(env, f, list, states, now);
+      stats.progress?.({ phase: 'collect', done: ++done, total, found: (stats.found = (stats.found || 0) + (r.inserted || 0)) });
+      return r;
+    };
+    stats.progress?.({ phase: 'collect', done: 0, total, found: 0 });
     const tasks = [
-      ...otherFeeds.map(f => () => collectFeed(env, f, due, states, now)),
-      ...(readSites ? SITE_FEEDS.map(f => () => collectFeed(env, f, techTopics, states, now)) : []),
+      ...otherFeeds.map(f => () => tracked(f, due)),
+      ...(readSites ? SITE_FEEDS.map(f => () => tracked(f, techTopics)) : []),
     ];
     const gdeltRun = (async () => {              // GDELT : une requête toutes les 6 s au plus
       const out = [];
-      for (const f of gdeltFeeds) { out.push(await collectFeed(env, f, due, states, now)); await sleep(env.GDELT_DELAY ?? 6000); }
+      for (const f of gdeltFeeds) { out.push(await tracked(f, due)); await sleep(env.GDELT_DELAY ?? 6000); }
       return out;
     })();
     stats.sources.push(...await pool(tasks, 5), ...await gdeltRun);
@@ -205,6 +213,7 @@ async function collect(env, topics, now, manual, stats) {
       const state = states2[t.id] || { web_cursor: 0 };
       // Première recherche d'un sujet : historique complet, même si les flux viennent d'être lus.
       const firstWeb = !w?.last_ok;
+      stats.progress?.({ phase: 'web', topic: t.config?.short || t.name });
       await collectWeb(env, t, firstWeb ? { ...state, backfill_done: 0 } : state, share, now, stats);
     }
   }
@@ -226,7 +235,7 @@ async function enrich(env, max = 6) {
 }
 
 // ---------- Analyse IA ----------
-async function analyze(env, topicsById, now, stats, stillOwner = async () => true) {
+async function analyze(env, topicsById, now, stats, stillOwner = async () => true, size = BATCH) {
   const first = await env.DB.prepare(
     `SELECT topic_id FROM raw_items WHERE status = 'pending' AND content IS NOT NULL ORDER BY fetched_at, published_at DESC LIMIT 1`).first();
   if (!first) return 0;
@@ -237,7 +246,7 @@ async function analyze(env, topicsById, now, stats, stillOwner = async () => tru
   }
   const { results: pending } = await env.DB.prepare(
     `SELECT * FROM raw_items WHERE status = 'pending' AND content IS NOT NULL AND topic_id = ?
-     ORDER BY (kind = 'target') DESC, published_at DESC LIMIT ${BATCH}`).bind(topic.id).all();
+     ORDER BY (kind = 'target') DESC, published_at DESC LIMIT ${size}`).bind(topic.id).all();
   const { results: cards } = await env.DB.prepare(
     'SELECT id, category, reliability, title, summary, competitor_model FROM cards WHERE topic_id = ? ORDER BY latest_at DESC LIMIT 80')
     .bind(topic.id).all();
@@ -449,6 +458,7 @@ async function sendNotifications(env, list) {
 
 function preempted(stats) {
   delete stats.notify;
+  delete stats.progress;
   return { ...stats, preempted: true };
 }
 
@@ -465,7 +475,7 @@ export async function ownsLock(env, token) {
   return parseLock(await getMeta(env, 'lock')).owner === token;
 }
 
-export async function tick(env, { mode = 'auto', budgetMs = 75000 } = {}) {
+export async function tick(env, { mode = 'auto', budgetMs = 75000, onProgress = null } = {}) {
   const t0 = Date.now();
   const now = t0;
   const cur = parseLock(await getMeta(env, 'lock'));
@@ -475,34 +485,51 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000 } = {}) {
   const stamp = () => setMeta(env, 'lock', `${Date.now()}|${token}|${mode}`);
   await stamp();
   const stats = { mode, sources: [], collected: 0, analyzed: 0, created: 0, updated: 0, ignored: 0, errors: [], notify: [] };
+  if (onProgress) stats.progress = ev => { try { onProgress(ev); } catch { /* affichage facultatif */ } };
   try {
     const topics = await loadTopics(env);
     const byId = Object.fromEntries(topics.map(t => [t.id, t]));
-    stats.collected = await collect(env, topics, now, mode === 'manual', stats);
-    if (!(await ownsLock(env, token))) return preempted(stats);
-    await stamp();
+    // La collecte et l'analyse avancent en même temps : chaque carte prête est signalée tout de suite
+    // (stats.progress), sans attendre la fin de la lecture de toutes les sources.
+    let collecting = true, lost = false;
+    const owner = () => ownsLock(env, token);
+    const collectRun = collect(env, topics, now, mode === 'manual', stats).finally(() => { collecting = false; });
+    const analysisRun = (async () => {
+      if (!aiConfigured(env)) return;
+      let first = true;
+      while (Date.now() - t0 < budgetMs) {
+        if (!(await owner())) { lost = true; return; }               // l'application ouverte a pris la main
+        await stamp();                                                // la passe est toujours en vie
+        await enrich(env, first ? 3 : 6);
+        let n;
+        try {
+          n = await analyze(env, byId, now, stats, owner, first ? 3 : BATCH);   // petit premier lot : première carte plus vite
+        } catch (e) {
+          stats.errors.push(`Analyse IA : ${e.message}`);
+          return;
+        }
+        if (n < 0) { lost = true; return; }
+        if (n > 0) {
+          first = false;
+          stats.analyzed += n;
+          const pending = (await env.DB.prepare(`SELECT COUNT(*) AS n FROM raw_items WHERE status = 'pending'`).first())?.n || 0;
+          stats.progress?.({ phase: 'cards', analyzed: stats.analyzed, created: stats.created, updated: stats.updated, pending });
+          continue;
+        }
+        if (!collecting) return;                                      // plus rien à analyser ni à attendre
+        await sleep(1500);                                            // les premiers articles arrivent
+      }
+    })();
+    stats.collected = await collectRun.catch(async e => { await analysisRun.catch(() => {}); throw e; });
+    stats.progress?.({ phase: 'analysis' });
+    if (!(await owner())) { await analysisRun.catch(() => {}); return preempted(stats); }
     const failed = stats.sources.filter(s => s.status.startsWith('erreur'));
     if (stats.sources.length && failed.length === stats.sources.length && failed.every(s => isNetworkError(s.status))) {
       stats.errors.push(`Collecte : ${NETWORK_MSG}`);
     }
-    if (!aiConfigured(env)) {
-      stats.errors.push('Aucune clé IA : les articles sont collectés mais pas encore analysés (Réglages).');
-    } else {
-      while (Date.now() - t0 < budgetMs) {
-        if (!(await ownsLock(env, token))) return preempted(stats);  // l'application ouverte a pris la main
-        await stamp();                                                // la passe est toujours en vie
-        await enrich(env);
-        try {
-          const n = await analyze(env, byId, now, stats, () => ownsLock(env, token));
-          if (n < 0) return preempted(stats);
-          stats.analyzed += n;
-          if (!n) break;
-        } catch (e) {
-          stats.errors.push(`Analyse IA : ${e.message}`);
-          break;
-        }
-      }
-    }
+    if (!aiConfigured(env)) stats.errors.push('Aucune clé IA : les articles sont collectés mais pas encore analysés (Réglages).');
+    await analysisRun;
+    if (lost) return preempted(stats);
     await sendNotifications(env, stats.notify);
     const srcErr = stats.sources.filter(s => !s.status.startsWith('ok'));
     if (stats.collected) await setMeta(env, 'last_collect', String(now));
@@ -520,5 +547,7 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000 } = {}) {
   }
   stats.pending = (await env.DB.prepare(`SELECT COUNT(*) AS n FROM raw_items WHERE status = 'pending'`).first())?.n || 0;
   delete stats.notify;
+  delete stats.progress;
+  delete stats.found;
   return stats;
 }

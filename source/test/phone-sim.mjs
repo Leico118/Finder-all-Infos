@@ -21,6 +21,7 @@ http.createServer(async (req, res) => {
   if (u.pathname === '/__notifications') { res.end(JSON.stringify(notifications)); return; }
   if (u.pathname === '/__http') {
     const r = JSON.parse(await read(req));
+    if (process.env.SLOW) await new Promise(ok => setTimeout(ok, r.url.includes('generativelanguage') ? 2500 : 300 + Math.random() * 1500));  // réseau de téléphone simulé
     try {
       const resp = await fakeFetch(r.url, { method: r.method, headers: r.headers, body: r.body });
       res.end(JSON.stringify({ status: resp.status, url: r.url, headers: {}, body: await resp.text() }));

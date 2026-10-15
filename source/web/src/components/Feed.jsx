@@ -1,8 +1,23 @@
 import { ReliabilityBadge, CompetitorBadge, Chip } from './Badge.jsx';
 import { IconRefresh, IconAlert } from './Icons.jsx';
 import { cardDate, timeAgo } from '../util.js';
+import { useEffect, useRef, useState } from 'react';
+import RefreshProgress from './RefreshProgress.jsx';
 
-export default function Feed({ topics, topic, setTopic, filter, setFilter, data, loading, error, refreshing, refreshMsg, onRefresh, onOpen, onReadAll }) {
+export default function Feed({ topics, topic, setTopic, filter, setFilter, data, loading, error, refreshing, refreshMsg, progress, fresh = 0, onRefresh, onOpen, onReadAll }) {
+  // Cartes arrivées pendant la lecture : si l'utilisateur a fait défiler la liste, un bouton le ramène en haut.
+  const [pill, setPill] = useState(0);
+  const seen = useRef(0);
+  useEffect(() => {
+    if (fresh > seen.current && window.scrollY > 240) setPill(n => n + fresh - seen.current);
+    seen.current = fresh;
+    if (!fresh) setPill(0);
+  }, [fresh]);
+  useEffect(() => {
+    const onScroll = () => window.scrollY < 120 && setPill(0);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
   const counts = data?.counts || {};
   const cards = data?.cards || [];
   const current = topics.find(t => t.id === topic) || null;
@@ -63,7 +78,14 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
         </a>
       )}
 
-      {refreshMsg && (
+      {pill > 0 && (
+        <button onClick={() => { window.scrollTo({ top: 0, behavior: 'smooth' }); setPill(0); }}
+          className="fixed left-1/2 top-[calc(env(safe-area-inset-top)+12px)] z-30 -translate-x-1/2 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-bg shadow-lg shadow-black/40 animate-rise">
+          ↑ {pill} nouveauté{pill > 1 ? 's' : ''}
+        </button>
+      )}
+
+      {refreshing && progress ? <RefreshProgress progress={progress} /> : refreshMsg && (
         <div className="mb-4 rounded-2xl bg-surface-2 px-4 py-3 text-sm text-ink/90 ring-1 ring-line animate-rise" role="status">{refreshMsg}</div>
       )}
 

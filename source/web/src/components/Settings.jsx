@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { device, isNative } from '../native.js';
+import RefreshProgress from './RefreshProgress.jsx';
 import { RELIABILITY, ReliabilityBadge, CompetitorBadge } from './Badge.jsx';
 import { IconChevron } from './Icons.jsx';
 import { formatDateTime, timeAgo } from '../util.js';
@@ -105,7 +106,7 @@ function AppUpdate({ version }) {
   );
 }
 
-export default function Settings({ onRefresh, refreshing, refreshMsg, onTopicsChanged, focusTopics }) {
+export default function Settings({ onRefresh, refreshing, refreshMsg, progress, onTopicsChanged, focusTopics }) {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
   const [openGroup, setOpenGroup] = useState(null);
@@ -192,7 +193,8 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, onTopicsCh
             </p>
           )}
           <Btn onClick={onRefresh} disabled={refreshing} className="mt-4 w-full bg-ink text-bg">{refreshing ? 'Synchronisation en cours…' : 'Actualiser maintenant'}</Btn>
-          {refreshMsg && <p className="mt-2 text-xs text-muted">{refreshMsg}</p>}
+          {refreshing && progress ? <div className="mt-3"><RefreshProgress progress={progress} compact /></div>
+            : refreshMsg && <p className="mt-2 text-xs text-muted">{refreshMsg}</p>}
           <p className="mt-3 text-[11px] leading-relaxed text-faint">
             « Actualiser » interroge toutes les sources de vos sujets puis analyse tous les articles en attente. L'ouverture de l'application ne déclenche rien.
           </p>

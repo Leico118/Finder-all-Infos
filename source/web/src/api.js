@@ -5,7 +5,7 @@ import { getEngine, isNative } from './native.js';
 async function req(path, opts = {}) {
   const method = opts.method || 'GET';
   if (isNative()) {
-    const r = await getEngine().handle(method, path, opts.body ?? null);
+    const r = await getEngine().handle(method, path, opts.body ?? null, { onProgress: opts.onProgress });
     if (r.status >= 400) throw Object.assign(new Error(r.data?.error || r.data?.reason || `Erreur ${r.status}`), { status: r.status, data: r.data });
     return r.data;
   }
@@ -34,7 +34,7 @@ export const api = {
   addTopic: text => post('/api/topics', { text }),
   updateTopic: (id, body) => req(`/api/topics/${encodeURIComponent(id)}`, { method: 'PUT', body }),
   deleteTopic: id => req(`/api/topics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  refresh: (mode = 'manual') => post(`/api/refresh?mode=${mode}`),
+  refresh: (mode = 'manual', onProgress) => req(`/api/refresh?mode=${mode}`, { method: 'POST', onProgress }),
   setup: body => post('/api/setup', body),
   update: () => req('/api/update'),
 };

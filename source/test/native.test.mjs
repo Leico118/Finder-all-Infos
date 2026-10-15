@@ -68,6 +68,15 @@ globalThis.__steal = false;
 const row6 = b.db.prepare("SELECT status FROM raw_items WHERE id='n1'").get();
 const lock6 = b.db.prepare("SELECT value FROM meta WHERE key='lock'").get().value;
 assert(r6.preempted && row6.status === 'pending' && lock6.includes('appli-ouverte'), 'passe de fond reprise par l\'appli : s\'arrête sans rien appliquer ni libérer le verrou');
+// Affichage progressif : le premier lot analysé est signalé avant la fin de la lecture des sources
+b.db.prepare(`INSERT OR REPLACE INTO raw_items (id, topic_id, title_key, url, title, snippet, content, source_id, source_name, lang, kind, published_at, fetched_at, status) VALUES ('p1','find-x10-ultra','kp1','https://x/p1','Find X10 Ultra progressif','s','', 'x','x','en','target',1,1,'pending')`).run();
+b.db.prepare("UPDATE meta SET value='0' WHERE key='lock'").run();
+const events = [];
+const rp = await api.refresh('manual', ev => events.push(ev));
+const firstCards = events.findIndex(e => e.phase === 'cards');
+const collectEnd = events.findIndex(e => e.phase === 'collect' && e.done === e.total && e.total > 0);
+assert(firstCards >= 0 && collectEnd > firstCards && rp.analyzed >= 1, `résultat signalé pendant la collecte (événement ${firstCards} avant la fin de lecture ${collectEnd})`);
+assert(events.some(e => e.phase === 'collect' && e.done > 0 && e.done < e.total), 'avancement de la lecture des sources signalé');
 // Mise à jour proposée depuis GitHub
 const up = await api.update();
 assert(up.available && up.latest === '1.0.9' && up.current === '1.0.0' && up.url.endsWith('/v1.0.9/Radar.apk'), 'nouvelle version GitHub détectée avec le bon fichier');
