@@ -111,7 +111,7 @@ export default function App() {
           r = await api.refresh(auto || pass > 1 ? 'auto' : 'manual');
         } catch (e) {
           if (e.status === 409 && busyTries++ < 14) {           // collecte de fond en cours
-            setRefreshMsg('Une collecte automatique est en cours, nouvel essai dans 20 secondes…');
+            setRefreshMsg('Une autre synchronisation se termine, nouvel essai dans 20 secondes…');
             await wait(20000); pass--; continue;
           }
           throw e;
@@ -139,8 +139,7 @@ export default function App() {
     }
   }
 
-  // À l'ouverture : intégration de ce qui est en attente (et collecte du jour si elle n'a pas encore eu lieu).
-  useEffect(() => { refresh({ auto: true }); }, []);
+  // Pas d'actualisation à l'ouverture : uniquement avec le bouton « Actualiser » (et la collecte de 8 h si elle est activée).
 
   async function readAll() {
     await api.readAll(topic).catch(() => {});

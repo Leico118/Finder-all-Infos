@@ -17,6 +17,9 @@ window.RadarBridge = {
         if (globalThis.__steal) b.db.prepare(`UPDATE meta SET value='${Date.now()}|appli-ouverte|manual' WHERE key='lock'`).run();
         res = { status: 200, url: req.url, headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok": true}' }] } }] }) };
+      } else if (req.url.includes('api.github.com')) {
+        res = { status: 200, url: req.url, headers: {}, body: JSON.stringify({ tag_name: 'v1.0.9', published_at: '2026-10-15T15:00:00Z',
+          assets: [{ name: 'Radar-v1.0.9.apk', browser_download_url: 'https://x/v.apk' }, { name: 'Radar.apk', browser_download_url: 'https://github.com/Leico118/Finder-all-Infos/releases/download/v1.0.9/Radar.apk', size: 7000000 }] }) };
       } else if (req.url.includes('api.tavily.com')) res = { status: 200, url: req.url, headers: {}, body: '{"results":[]}' };
       else if (req.url.includes('workers.dev')) res = { error: 'UnknownHostException : pas de réseau' };
       else res = { status: 200, url: req.url, headers: {}, body: '<rss><channel></channel></rss>' };
@@ -65,6 +68,21 @@ globalThis.__steal = false;
 const row6 = b.db.prepare("SELECT status FROM raw_items WHERE id='n1'").get();
 const lock6 = b.db.prepare("SELECT value FROM meta WHERE key='lock'").get().value;
 assert(r6.preempted && row6.status === 'pending' && lock6.includes('appli-ouverte'), 'passe de fond reprise par l\'appli : s\'arrête sans rien appliquer ni libérer le verrou');
+// Mise à jour proposée depuis GitHub
+const up = await api.update();
+assert(up.available && up.latest === '1.0.9' && up.current === '1.0.0' && up.url.endsWith('/v1.0.9/Radar.apk'), 'nouvelle version GitHub détectée avec le bon fichier');
+// Collecte automatique désactivable
+await api.setup({ auto_collect: false });
+b.db.prepare("UPDATE meta SET value='0' WHERE key='lock'").run();
+const nBefore = log.length;
+const rb = await api.refresh('background');
+assert(rb.skipped && log.length === nBefore && (await api.status()).auto_collect === false, 'collecte de 8 h désactivée : la tâche de fond ne fait rien');
+await api.setup({ auto_collect: true });
+assert((await api.status()).auto_collect === true, 'collecte de 8 h réactivée');
+// Le message « Aucune clé IA » disparaît quand la clé est enregistrée
+b.db.prepare("UPDATE meta SET value='Aucune clé IA : les articles sont collectés mais pas encore analysés (Réglages).' WHERE key='last_error'").run();
+await api.setup({ ai_key: 'AIzaTEST2' });
+assert((await api.status()).last_error === '', 'message « Aucune clé IA » effacé après enregistrement de la clé');
 const st = await api.status();
 assert(st.device.platform === 'android' && st.device.batteryExempt === false, 'infos du téléphone dans les réglages');
 try { await api.card('inconnue'); assert(false, 'erreur 404'); } catch (e) { assert(e.status === 404, 'erreurs remontées à l\'interface'); }

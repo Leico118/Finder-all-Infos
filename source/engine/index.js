@@ -1,6 +1,6 @@
 // Moteur local de l'application : mêmes routes que l'ancienne API web, exécutées sur le téléphone.
 import { SCHEMA, SCHEMA_VERSION } from './schema.js';
-import { setFetch } from './net.js';
+import { setFetch, http } from './net.js';
 import { tick, getMeta, setMeta, dayStart, loadTopics } from './pipeline.js';
 import { aiConfigured, callAI } from './ai.js';
 import { searchConfigured, tavily } from './websearch.js';
@@ -19,6 +19,8 @@ const FILTERS = {
   competitors: `c.category = 'competitor'`,
 };
 
+const UPDATE_REPO = 'Leico118/Finder-all-Infos';
+
 // platform : { DB, fetch, notify, info } fournis par Android (ou par les tests).
 export function createEngine(platform) {
   if (platform.fetch) setFetch(platform.fetch);
@@ -36,6 +38,7 @@ export function createEngine(platform) {
       GEMINI_API_KEY: c.gemini_key || '',
       ANTHROPIC_API_KEY: c.anthropic_key || '',
       TAVILY_API_KEY: c.tavily_key || '',
+      AUTO_COLLECT: c.auto_collect !== '0',
       notify: platform.notify,
     };
   }
@@ -166,6 +169,7 @@ export function createEngine(platform) {
       ai: { configured: aiConfigured(E), provider: E.AI_PROVIDER },
       search: { configured: searchConfigured(E) },
       notify_enabled: (await getMeta(E, 'notify_enabled')) !== '0',
+      auto_collect: E.AUTO_COLLECT,
       device: platform.info ? await platform.info() : null,
       source_groups: groups,
     });
@@ -240,6 +244,7 @@ export function createEngine(platform) {
   async function setup(E, body) {
     const result = { ok: true };
     if (body?.notify !== undefined) await setMeta(E, 'notify_enabled', body.notify ? '1' : '0');
+    if (body?.auto_collect !== undefined) await setCfg('auto_collect', body.auto_collect ? '1' : '0');
     const skey = String(body?.search_key || '').trim();
     if (skey) {
       try { await tavily({ TAVILY_API_KEY: skey }, { query: 'actualités', max_results: 1 }); }
@@ -258,18 +263,42 @@ export function createEngine(platform) {
       await setCfg(p === 'anthropic' ? 'anthropic_key' : 'gemini_key', key);
       await setCfg('ai_provider', p);
       result.ai_ok = true;
+      // L'ancien message « Aucune clé IA » ne doit pas rester affiché une fois la clé enregistrée.
+      const last = (await getMeta(E, 'last_error')) || '';
+      if (last.includes('Aucune clé IA')) await setMeta(E, 'last_error', last.split(' | ').filter(x => !x.includes('Aucune clé IA')).join(' | '));
     }
     return ok(result);
   }
 
   async function refresh(E, q) {
     const mode = ['auto', 'manual', 'background'].includes(q.get('mode')) ? q.get('mode') : 'manual';
+    if (mode === 'background' && !E.AUTO_COLLECT) return ok({ skipped: true, reason: 'Collecte automatique désactivée dans les réglages.' });
     if (!(await getMeta(E, 'legacy_import'))) {
       try { await importLegacy(E); } catch (e) { /* nouvel essai à la prochaine passe */ }
     }
     const budget = mode === 'background' ? 8 * 60000 : 75000;
     const r = await tick(E, { mode, budgetMs: Number(q.get('budget')) || budget });
     return ok(r, r.skipped ? 409 : 200);
+  }
+
+  // ---------- Mise à jour de l'application (dernière version publiée sur GitHub) ----------
+  const cmpVersion = (a, b) => {
+    const x = String(a).replace(/^v/, '').split('.').map(Number), y = String(b).replace(/^v/, '').split('.').map(Number);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return Math.sign(d); }
+    return 0;
+  };
+  async function checkUpdate() {
+    const device = platform.info ? await platform.info() : null;
+    const current = device?.version || '';
+    const res = await http(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'Radar-Android' }, timeout: 20000 });
+    if (!res.ok) return fail(`GitHub ne répond pas (${res.status})`, 502);
+    let rel;
+    try { rel = JSON.parse(await res.text()); } catch { return fail('réponse de GitHub illisible, réessayez plus tard', 502); }
+    const asset = (rel.assets || []).find(a => a.name === 'Radar.apk') || (rel.assets || []).find(a => /\.apk$/.test(a.name));
+    const latest = String(rel.tag_name || '').replace(/^v/, '');
+    return ok({ current, latest, available: !!(asset && current && latest && cmpVersion(latest, current) > 0),
+      url: asset?.browser_download_url || null, size: asset?.size || null, published_at: rel.published_at || null });
   }
 
   // ---------- Routeur ----------
@@ -300,6 +329,7 @@ export function createEngine(platform) {
       if (method === 'DELETE' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)$/))) return await deleteTopic(E, m[1]);
       if (method === 'POST' && p === '/api/setup') return await setup(E, body);
       if (method === 'POST' && p === '/api/refresh') return await refresh(E, q);
+      if (method === 'GET' && p === '/api/update') return await checkUpdate();
       return fail('Route inconnue', 404);
     } catch (e) {
       return fail(e.message || String(e), 500);

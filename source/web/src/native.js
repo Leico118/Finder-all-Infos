@@ -59,5 +59,12 @@ export const device = {
   info: () => (isNative() ? JSON.parse(bridge().info()) : null),
   requestNotifications: () => isNative() && bridge().requestNotifications(),
   requestBattery: () => isNative() && bridge().requestBatteryExemption(),
+  // Mise à jour : téléchargement + installation par Android ; l'avancement arrive par window.__radarUpdate(état, détail).
+  installUpdate: (url, onProgress) => {
+    if (!isNative() || !bridge().installUpdate) return false;
+    window.__radarUpdate = (state, detail) => onProgress?.(state, detail);
+    bridge().installUpdate(url);
+    return true;
+  },
   openUrl: url => (isNative() ? bridge().openUrl(url) : window.open(url, '_blank', 'noopener')),
 };

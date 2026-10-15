@@ -120,6 +120,13 @@ public final class RadarBridge {
         });
     }
 
+    /** Télécharge et installe la nouvelle version ; l'avancement revient par window.__radarUpdate(état, détail). */
+    @JavascriptInterface
+    public void installUpdate(final String url) {
+        NET.execute(() -> Updater.run(ctx, activity, url, (state, detail) -> main.post(() -> web.evaluateJavascript(
+                "window.__radarUpdate && window.__radarUpdate(" + JSONObject.quote(state) + "," + JSONObject.quote(detail) + ")", null))));
+    }
+
     @JavascriptInterface
     public void done(String json) {
         if (done != null) done.onDone(json);

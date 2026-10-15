@@ -36,4 +36,5 @@ export const api = {
   deleteTopic: id => req(`/api/topics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   refresh: (mode = 'manual') => post(`/api/refresh?mode=${mode}`),
   setup: body => post('/api/setup', body),
+  update: () => req('/api/update'),
 };

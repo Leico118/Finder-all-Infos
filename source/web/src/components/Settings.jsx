@@ -55,6 +55,56 @@ function KeyForm({ label, placeholder, id, configured, onSave, children }) {
   );
 }
 
+function Switch({ on, onClick, label }) {
+  return (
+    <button onClick={onClick} role="switch" aria-checked={on} aria-label={label}
+      className={`relative h-7 w-12 shrink-0 rounded-full transition ${on ? 'bg-accent' : 'bg-surface-2 ring-1 ring-line'}`}>
+      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? 'left-6' : 'left-1'}`} />
+    </button>
+  );
+}
+
+// Version installée et mise à jour depuis GitHub, sans passer par le navigateur.
+function AppUpdate({ version }) {
+  const [info, setInfo] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const check = async () => {
+    setChecking(true); setMsg('');
+    try { setInfo(await api.update()); } catch (e) { setMsg(`Vérification impossible : ${e.message}`); }
+    setChecking(false);
+  };
+  useEffect(() => { check(); }, []);
+  const install = () => {
+    setBusy(true); setMsg('Téléchargement…');
+    const started = device.installUpdate(info.url, (state, detail) => {
+      if (state === 'download') setMsg(`Téléchargement… ${detail}`);
+      else if (state === 'installing') setMsg('Android va vous demander de confirmer la mise à jour : touchez « Mettre à jour ».');
+      else { setMsg(detail); setBusy(false); }
+    });
+    if (!started) { device.openUrl(info.url); setBusy(false); setMsg(''); }
+  };
+  const available = info?.available;
+  return (
+    <Block title="Application" highlight={available}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm text-ink">{available ? `Nouvelle version ${info.latest} disponible` : `Radar ${version || info?.current || ''}`}</p>
+          <p className="text-xs text-muted">
+            {available ? `Version installée : ${info.current}. Vos sujets, clés et articles sont conservés.`
+              : checking ? 'Recherche d\'une mise à jour…' : info ? 'Vous avez la dernière version.' : ''}
+          </p>
+        </div>
+        {available
+          ? <Btn onClick={install} disabled={busy} className="shrink-0 bg-ink text-bg">{busy ? '…' : 'Mettre à jour'}</Btn>
+          : <Btn onClick={check} disabled={checking} className="shrink-0 bg-surface-2 text-ink ring-1 ring-line">Vérifier</Btn>}
+      </div>
+      {msg && <p className="mt-2 text-xs leading-relaxed text-muted">{msg}</p>}
+    </Block>
+  );
+}
+
 export default function Settings({ onRefresh, refreshing, refreshMsg, onTopicsChanged, focusTopics }) {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
@@ -72,6 +122,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, onTopicsCh
 
   const saveAI = async key => { await api.setup({ ai_provider: 'gemini', ai_key: key }); load(); onTopicsChanged?.(); };
   const saveSearch = async key => { await api.setup({ search_key: key }); load(); };
+  const toggleAuto = async () => { await api.setup({ auto_collect: !status.auto_collect }); load(); };
   const toggleNotify = async () => {
     const on = !status.notify_enabled;
     if (on && dev && !dev.notifications) device.requestNotifications();
@@ -92,6 +143,8 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, onTopicsCh
       {error && <div className="mb-3 rounded-3xl bg-surface p-5 text-sm text-red-300 ring-1 ring-red-400/20">{error}</div>}
 
       <div className="space-y-3">
+        {isNative() && <AppUpdate version={dev?.version} />}
+
         {status && (
           <Block title="Intelligence artificielle" highlight={needsSetup}>
             <KeyForm label="Google Gemini" placeholder="AIza…" id="gemini-key" configured={status.ai.configured} onSave={saveAI}>
@@ -121,10 +174,10 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, onTopicsCh
 
         <Block title="Synchronisation">
           <p className="text-sm text-ink">Dernière synchronisation : {timeAgo(status?.last_sync)}</p>
-          {status && <p className="mt-0.5 text-xs text-muted">Prochaine collecte : {formatDateTime(status.next_collect)}</p>}
+          {status && <p className="mt-0.5 text-xs text-muted">{status.auto_collect ? `Prochaine collecte automatique : ${formatDateTime(status.next_collect)}` : 'Collecte automatique désactivée'}</p>}
           {s && (
             <p className="mt-3 text-xs leading-relaxed text-muted">
-              Dernier passage ({s.mode === 'manual' ? 'manuel' : s.mode === 'background' ? 'automatique' : 'à l\'ouverture'}) :
+              Dernier passage ({s.mode === 'background' ? 'automatique' : 'manuel'}) :
               {' '}{s.topics} sujet{s.topics > 1 ? 's' : ''} collecté{s.topics > 1 ? 's' : ''}, {s.newItems} nouvel{s.newItems > 1 ? 's' : ''} article{s.newItems > 1 ? 's' : ''},
               {' '}{s.analyzed} analysé{s.analyzed > 1 ? 's' : ''}, {s.created} carte{s.created > 1 ? 's' : ''} créée{s.created > 1 ? 's' : ''}.
             </p>
@@ -141,9 +194,17 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, onTopicsCh
           <Btn onClick={onRefresh} disabled={refreshing} className="mt-4 w-full bg-ink text-bg">{refreshing ? 'Synchronisation en cours…' : 'Actualiser maintenant'}</Btn>
           {refreshMsg && <p className="mt-2 text-xs text-muted">{refreshMsg}</p>}
           <p className="mt-3 text-[11px] leading-relaxed text-faint">
-            Chaque jour à 8 h, le téléphone interroge toutes les sources de vos sujets, puis analyse les articles petit à petit, même application fermée.
-            À l'ouverture, l'application termine ce qui reste en attente. « Actualiser » relance une collecte immédiate.
+            « Actualiser » interroge toutes les sources de vos sujets puis analyse tous les articles en attente. L'ouverture de l'application ne déclenche rien.
           </p>
+          {status && (
+            <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4">
+              <div>
+                <p className="text-sm text-ink">Collecte automatique à 8 h</p>
+                <p className="text-xs text-muted">{status.auto_collect ? 'Chaque matin, même application fermée.' : 'Désactivée : rien ne se fait sans « Actualiser ».'}</p>
+              </div>
+              <Switch on={status.auto_collect} onClick={toggleAuto} label="Collecte automatique à 8 h" />
+            </div>
+          )}
         </Block>
 
         {isNative() && dev && (
