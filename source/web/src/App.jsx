@@ -24,7 +24,12 @@ export default function App() {
   const [route, setRoute] = useState(parseHash);
   const [topics, setTopics] = useState([]);
   const [topic, setTopicState] = useState(() => store.get('radar-topic') || '');
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilterState] = useState('all');
+  const unreadSince = useRef(0);                          // vue « Non lus » : début de la consultation
+  const setFilter = f => {
+    if (f === 'unread' && filter !== 'unread') unreadSince.current = Date.now();
+    setFilterState(f);
+  };
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -54,7 +59,7 @@ export default function App() {
   const load = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
     try {
-      setData(await api.cards(filter, topic));
+      setData(await api.cards(filter, topic, filter === 'unread' ? unreadSince.current : undefined));
       setError('');
     } catch (e) {
       setError(e.message);
@@ -71,6 +76,7 @@ export default function App() {
     store.set('radar-topic', id);
     const t = topics.find(x => x.id === id);
     if (filter === 'competitors' && t && t.type !== 'product') setFilter('all');
+    if (filter === 'unread') unreadSince.current = Date.now();
   };
 
   useEffect(() => {

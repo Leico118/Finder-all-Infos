@@ -4,6 +4,15 @@ import { cardDate, timeAgo } from '../util.js';
 import { useEffect, useRef, useState } from 'react';
 import RefreshProgress from './RefreshProgress.jsx';
 
+// Séparateurs par mois (date de la dernière information de la carte).
+const monthKey = ts => { if (!ts) return ''; const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth()}`; };
+function monthLabel(ts) {
+  if (!ts) return 'Date inconnue';
+  const d = new Date(ts);
+  const m = d.toLocaleDateString('fr-FR', { month: 'long' });
+  return d.getFullYear() === new Date().getFullYear() ? m : `${m} ${d.getFullYear()}`;
+}
+
 export default function Feed({ topics, topic, setTopic, filter, setFilter, data, loading, error, refreshing, refreshMsg, progress, fresh = 0, onRefresh, onOpen, onReadAll }) {
   // Cartes arrivées pendant la lecture : si l'utilisateur a fait défiler la liste, un bouton le ramène en haut.
   const [pill, setPill] = useState(0);
@@ -25,6 +34,7 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
   const showRivals = !current ? topics.some(t => t.type === 'product') : current.type === 'product';
   const filters = [
     ['all', 'Tout'],
+    ...(counts.unread > 0 || filter === 'unread' ? [['unread', 'Non lus']] : []),
     ['leaks', current?.type === 'general' ? 'Non confirmé' : 'Leaks & rumeurs'],
     ['official', 'Officiel'],
     ...(showRivals ? [['competitors', 'Concurrents']] : []),
@@ -97,6 +107,7 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
             <button key={id} onClick={() => setFilter(id)}
               className={`shrink-0 rounded-full px-4 py-1.5 text-[13px] font-medium transition ${
                 active ? 'bg-ink text-bg' : 'bg-surface text-muted ring-1 ring-line active:bg-surface-2'}`}>
+              {id === 'unread' && <span className={`mr-1.5 inline-block h-1.5 w-1.5 -translate-y-px rounded-full ${active ? 'bg-bg' : 'bg-accent'}`} />}
               {label}{n ? <span className={`ml-1.5 text-xs ${active ? 'text-bg/60' : 'text-faint'}`}>{n}</span> : null}
             </button>
           );
@@ -105,11 +116,13 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
 
       {counts.unread > 0 && (
         <div className="mb-3 flex items-center justify-between px-1 text-xs">
-          <span className="flex items-center gap-2 text-accent">
-            <span className="h-2 w-2 rounded-full bg-accent" />
-            {counts.unread} actualité{counts.unread > 1 ? 's' : ''} non consultée{counts.unread > 1 ? 's' : ''}
-          </span>
-          <button onClick={onReadAll} className="text-muted active:text-ink">Tout marquer comme lu</button>
+          {filter === 'unread'
+            ? <span className="text-muted">Les cartes lues restent ici jusqu'à ce que vous quittiez ce filtre.</span>
+            : <button onClick={() => { setFilter('unread'); window.scrollTo(0, 0); }} className="flex items-center gap-2 text-accent active:opacity-70">
+                <span className="h-2 w-2 rounded-full bg-accent" />
+                {counts.unread} actualité{counts.unread > 1 ? 's' : ''} non consultée{counts.unread > 1 ? 's' : ''} <span className="underline underline-offset-2">Voir</span>
+              </button>}
+          <button onClick={onReadAll} className="shrink-0 pl-3 text-muted active:text-ink">Tout marquer comme lu</button>
         </div>
       )}
 
@@ -119,7 +132,14 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
         <div className="space-y-3">{[0, 1, 2].map(i => <div key={i} className="h-32 animate-pulse rounded-3xl bg-surface" />)}</div>
       )}
 
-      {!loading && !error && !cards.length && (
+      {!loading && !error && !cards.length && filter === 'unread' && (
+        <div className="rounded-3xl bg-surface p-6 text-center ring-1 ring-line">
+          <p className="text-sm text-ink">✔ Tout est lu.</p>
+          <button onClick={() => setFilter('all')} className="mt-2 text-xs text-accent underline underline-offset-2">Voir toutes les actualités</button>
+        </div>
+      )}
+
+      {!loading && !error && !cards.length && filter !== 'unread' && (
         <div className="rounded-3xl bg-surface p-6 text-center ring-1 ring-line">
           <p className="text-sm text-ink">Aucune actualité ici pour le moment.</p>
           <p className="mt-2 text-xs leading-relaxed text-muted">
@@ -129,11 +149,19 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
         </div>
       )}
 
-      <ul className="space-y-3">
+      <ul>
         {cards.map((c, i) => {
           const t = byId[c.topic_id];
+          const month = monthKey(c.latest_at);
+          const newMonth = i === 0 || month !== monthKey(cards[i - 1].latest_at);
           return (
-            <li key={c.id} className="animate-rise" style={{ animationDelay: `${Math.min(i, 8) * 35}ms` }}>
+            <li key={c.id} className={`animate-rise ${newMonth ? '' : 'mt-3'}`} style={{ animationDelay: `${Math.min(i, 8) * 35}ms` }}>
+              {newMonth && (
+                <div className={`flex items-center gap-3 px-1 pb-3 ${i === 0 ? 'pt-0' : 'pt-7'}`}>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">{monthLabel(c.latest_at)}</span>
+                  <span className="h-px flex-1 bg-line" />
+                </div>
+              )}
               <button onClick={() => onOpen(c.id)}
                 className="block w-full rounded-3xl bg-surface p-4 text-left ring-1 ring-line transition active:scale-[0.985] active:bg-surface-2">
                 <div className="mb-2 flex items-center justify-between gap-2 text-xs text-muted">

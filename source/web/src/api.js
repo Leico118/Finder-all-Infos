@@ -24,7 +24,7 @@ const q = o => Object.entries(o).filter(([, v]) => v !== undefined && v !== null
 const post = (path, body) => req(path, { method: 'POST', body });
 
 export const api = {
-  cards: (filter, topic) => req(`/api/cards?${q({ filter, topic })}`),
+  cards: (filter, topic, since) => req(`/api/cards?${q({ filter, topic, since })}`),
   card: id => req(`/api/cards/${encodeURIComponent(id)}`),
   markRead: id => post(`/api/cards/${encodeURIComponent(id)}/read`),
   readAll: topic => post(`/api/read-all?${q({ topic })}`),

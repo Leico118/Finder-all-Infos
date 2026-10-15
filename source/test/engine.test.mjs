@@ -110,6 +110,24 @@ r = await api('PUT', '/api/topics/voitures-byd', { match: 'BYD, 比亚迪, Denza
 assert(r.status === 200 && (await api('GET', '/api/topics')).data.topics.find(t => t.id === 'voitures-byd').match.includes('Denza'), 'modification des mots-clés');
 r = await api('DELETE', '/api/topics/voitures-byd');
 assert(r.status === 200 && bridge.db.prepare("SELECT COUNT(*) n FROM cards WHERE topic_id = 'voitures-byd'").get().n === 0, 'suppression d\'un sujet et de ses cartes');
+// Filtre « Non lus » : une carte lue pendant la consultation reste visible, pas les cartes lues avant
+{
+  const all = (await api('GET', '/api/cards')).data.cards;
+  const [a, b2] = all;
+  const c = all.find(x => x.unread && x.id !== a.id && x.id !== b2.id);
+  const expected = all.filter(x => x.unread && x.id !== a.id && x.id !== b2.id).length;
+  await api('POST', `/api/cards/${a.id}/read`);
+  await new Promise(r => setTimeout(r, 5));
+  const since = Date.now();
+  await new Promise(r => setTimeout(r, 5));
+  await api('POST', `/api/cards/${b2.id}/read`);
+  const u = (await api('GET', `/api/cards?filter=unread&since=${since}`)).data;
+  const ids = u.cards.map(x => x.id);
+  assert(!ids.includes(a.id) && ids.includes(b2.id) && ids.includes(c.id) && u.counts.unread === expected && ids.length === expected + 1,
+    `filtre Non lus (${ids.length} cartes, ${u.counts.unread} non lues, total ${all.length}, a lue avant ${!!a.read_at})`);
+  const u2 = (await api('GET', '/api/cards?filter=unread')).data.cards.map(x => x.id);
+  assert(!u2.includes(b2.id) && u2.includes(c.id), 'Non lus rouvert : les cartes lues disparaissent');
+}
 // Création en double (second appui, écran rouvert) : un seul sujet, pas d'erreur
 setTopicResponse({ ...topicResponse, name: 'Nintendo Switch 3' });
 const [c1, c2] = await Promise.all([api('POST', '/api/topics', { text: 'Nintendo' }), api('POST', '/api/topics', { text: 'nintendo' })]);
