@@ -55,6 +55,11 @@ async function saveSourceState(env, src, now, status, inserted) {
 
 async function insertItems(env, rows, now) {
   if (!rows.length) return 0;
+  // Sujet supprimé pendant l'actualisation : ses articles ne sont plus enregistrés.
+  const { results: alive } = await env.DB.prepare('SELECT id FROM topics').all();
+  const ids = new Set((alive || []).map(r => r.id));
+  rows = rows.filter(r => ids.has(r.topic_id));
+  if (!rows.length) return 0;
   const stmts = [];
   for (const r of rows) {
     stmts.push(env.DB.prepare(
@@ -239,7 +244,8 @@ async function analyze(env, topicsById, now, stats, stillOwner = async () => tru
   const first = await env.DB.prepare(
     `SELECT topic_id FROM raw_items WHERE status = 'pending' AND content IS NOT NULL ORDER BY fetched_at, published_at DESC LIMIT 1`).first();
   if (!first) return 0;
-  const topic = topicsById[first.topic_id];
+  const exists = async id => !!(await env.DB.prepare('SELECT id FROM topics WHERE id = ?').bind(id).first());
+  const topic = (await exists(first.topic_id)) ? topicsById[first.topic_id] : null;
   if (!topic) {
     await env.DB.prepare(`UPDATE raw_items SET status = 'ignored', reason = 'sujet supprimé' WHERE topic_id = ?`).bind(first.topic_id).run();
     return 1;
@@ -262,6 +268,7 @@ async function analyze(env, topicsById, now, stats, stillOwner = async () => tru
     throw e;
   }
   if (!(await stillOwner())) return -1;                                   // une autre passe a pris la main : résultat ignoré
+  if (!(await exists(topic.id))) return pending.length;                  // sujet supprimé pendant l'analyse : rien n'est créé
   await applyAnalysis(env, topic, pending, cards || [], out || {}, now, stats);
   return pending.length;
 }
@@ -456,6 +463,21 @@ async function sendNotifications(env, list) {
   }
 }
 
+// Restes d'un sujet supprimé (par exemple pendant une actualisation) : effacés.
+export async function purgeOrphans(env) {
+  const orphan = 'topic_id NOT IN (SELECT id FROM topics)';
+  const cardOrphan = `card_id IN (SELECT id FROM cards WHERE ${orphan})`;
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM card_sources WHERE ${cardOrphan}`),
+    env.DB.prepare(`DELETE FROM card_history WHERE ${cardOrphan}`),
+    env.DB.prepare(`DELETE FROM card_reads WHERE ${cardOrphan}`),
+    env.DB.prepare(`DELETE FROM cards WHERE ${orphan}`),
+    env.DB.prepare(`DELETE FROM raw_items WHERE ${orphan}`),
+    env.DB.prepare(`DELETE FROM specs WHERE ${orphan}`),
+    env.DB.prepare(`DELETE FROM spec_history WHERE ${orphan}`),
+  ]);
+}
+
 function preempted(stats) {
   delete stats.notify;
   delete stats.progress;
@@ -487,6 +509,7 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000, onProgress = 
   const stats = { mode, sources: [], collected: 0, analyzed: 0, created: 0, updated: 0, ignored: 0, errors: [], notify: [] };
   if (onProgress) stats.progress = ev => { try { onProgress(ev); } catch { /* affichage facultatif */ } };
   try {
+    await purgeOrphans(env);
     const topics = await loadTopics(env);
     const byId = Object.fromEntries(topics.map(t => [t.id, t]));
     // La collecte et l'analyse avancent en même temps : chaque carte prête est signalée tout de suite
@@ -530,7 +553,10 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000, onProgress = 
     if (!aiConfigured(env)) stats.errors.push('Aucune clé IA : les articles sont collectés mais pas encore analysés (Réglages).');
     await analysisRun;
     if (lost) return preempted(stats);
-    await sendNotifications(env, stats.notify);
+    await purgeOrphans(env);                                          // sujet supprimé pendant cette actualisation
+    const { results: aliveT } = await env.DB.prepare('SELECT id FROM topics').all();
+    const aliveIds = new Set((aliveT || []).map(r => r.id));
+    await sendNotifications(env, stats.notify.filter(n => aliveIds.has(n.topic?.id)));
     const srcErr = stats.sources.filter(s => !s.status.startsWith('ok'));
     if (stats.collected) await setMeta(env, 'last_collect', String(now));
     await setMeta(env, 'last_sync', String(now));

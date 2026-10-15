@@ -1,7 +1,7 @@
 // Moteur local de l'application : mêmes routes que l'ancienne API web, exécutées sur le téléphone.
 import { SCHEMA, SCHEMA_VERSION } from './schema.js';
 import { setFetch, http } from './net.js';
-import { tick, getMeta, setMeta, dayStart, loadTopics } from './pipeline.js';
+import { tick, getMeta, setMeta, dayStart, loadTopics, purgeOrphans } from './pipeline.js';
 import { aiConfigured, callAI } from './ai.js';
 import { searchConfigured, tavily } from './websearch.js';
 import { DEFAULT_TOPIC, MAX_TOPICS, TOPIC_SYSTEM, topicUserPrompt, sanitizeConfig } from './topics.js';
@@ -59,7 +59,7 @@ export function createEngine(platform) {
   // ---------- Lecture ----------
   async function listCards(E, q) {
     const topic = q.get('topic') || '';
-    const where = [];
+    const where = ['c.topic_id IN (SELECT id FROM topics)'];   // jamais de carte d'un sujet supprimé
     const args = [];
     if (topic) { where.push('c.topic_id = ?'); args.push(topic); }
     if (q.get('filter') === 'unread') {
@@ -78,7 +78,7 @@ export function createEngine(platform) {
               (SELECT COUNT(*) FROM card_sources s WHERE s.card_id = c.id) AS source_count
        FROM cards c LEFT JOIN card_reads r ON r.card_id = c.id ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
        ORDER BY c.latest_at DESC LIMIT ${limit}`).bind(...args).all();
-    const cw = topic ? 'WHERE c.topic_id = ?' : '';
+    const cw = topic ? 'WHERE c.topic_id = ?' : 'WHERE c.topic_id IN (SELECT id FROM topics)';
     const counts = await E.DB.prepare(
       `SELECT COUNT(*) AS all_count,
          SUM(CASE WHEN category = 'target' AND reliability != 'official' THEN 1 ELSE 0 END) AS leaks,
@@ -88,7 +88,7 @@ export function createEngine(platform) {
        FROM cards c LEFT JOIN card_reads r ON r.card_id = c.id ${cw}`).bind(...(topic ? [topic] : [])).first();
     const { results: unreadBy } = await E.DB.prepare(
       `SELECT c.topic_id, COUNT(*) AS n FROM cards c LEFT JOIN card_reads r ON r.card_id = c.id
-       WHERE r.read_at IS NULL OR r.read_at < c.updated_at GROUP BY c.topic_id`).all();
+       WHERE (r.read_at IS NULL OR r.read_at < c.updated_at) AND c.topic_id IN (SELECT id FROM topics) GROUP BY c.topic_id`).all();
     const pending = (await E.DB.prepare(`SELECT COUNT(*) AS n FROM raw_items WHERE status = 'pending'`).first())?.n || 0;
     return ok({
       cards: (results || []).map(c => ({ ...c, unread: !c.read_at || c.read_at < c.updated_at,
@@ -257,6 +257,7 @@ export function createEngine(platform) {
       E.DB.prepare('DELETE FROM topics WHERE id = ?').bind(id),
     ];
     await E.DB.batch(stmts);
+    await purgeOrphans(E);
     return ok({ ok: true });
   }
 

@@ -14,6 +14,7 @@ window.RadarBridge = {
       let res;
       if (req.url.includes('generativelanguage') && globalThis.__offline) res = { error: 'UnknownHostException : Unable to resolve host "generativelanguage.googleapis.com": No address associated with hostname' };
       else if (req.url.includes('generativelanguage')) {
+        if (globalThis.__deleteDuring) { const id = globalThis.__deleteDuring; globalThis.__deleteDuring = null; b.db.prepare('DELETE FROM topics WHERE id = ?').run(id); }
         if (globalThis.__steal) b.db.prepare(`UPDATE meta SET value='${Date.now()}|appli-ouverte|manual' WHERE key='lock'`).run();
         res = { status: 200, url: req.url, headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok": true}' }] } }] }) };
@@ -77,6 +78,17 @@ const firstCards = events.findIndex(e => e.phase === 'cards');
 const collectEnd = events.findIndex(e => e.phase === 'collect' && e.done === e.total && e.total > 0);
 assert(firstCards >= 0 && collectEnd > firstCards && rp.analyzed >= 1, `résultat signalé pendant la collecte (événement ${firstCards} avant la fin de lecture ${collectEnd})`);
 assert(events.some(e => e.phase === 'collect' && e.done > 0 && e.done < e.total), 'avancement de la lecture des sources signalé');
+// Sujet supprimé pendant l'actualisation : aucune carte orpheline
+b.db.prepare(`INSERT INTO cards (id, topic_id, category, reliability, title, summary, latest_at, first_seen_at, created_at, updated_at) VALUES ('ghost1','ancien-sujet','target','rumor','Tears of the Kingdom sur PC','x',5,5,5,5)`).run();
+const listed = (await api.cards('all')).cards.map(c => c.id);
+assert(!listed.includes('ghost1'), 'carte d\'un sujet supprimé jamais affichée');
+b.db.prepare(`INSERT INTO topics (id, name, type, config, position, created_at, updated_at) VALUES ('nintendo','Nintendo','general','{"match":["Nintendo"]}',5,1,1)`).run();
+b.db.prepare(`INSERT INTO raw_items (id, topic_id, title_key, url, title, snippet, content, source_id, source_name, lang, kind, published_at, fetched_at, status) VALUES ('nz1','nintendo','knz1','https://x/nz1','Zelda sur PC','s','', 'x','x','en','target',1,0,'pending')`).run();
+b.db.prepare("UPDATE meta SET value='0' WHERE key='lock'").run();
+globalThis.__deleteDuring = 'nintendo';
+const rd = await api.refresh('manual');
+const leftovers = b.db.prepare("SELECT (SELECT COUNT(*) FROM cards WHERE topic_id NOT IN (SELECT id FROM topics)) + (SELECT COUNT(*) FROM raw_items WHERE topic_id = 'nintendo') AS n").get().n;
+assert(!globalThis.__deleteDuring && leftovers === 0 && !rd.errors.length, `sujet supprimé pendant l'analyse : rien de créé, restes effacés (${leftovers})`);
 // Mise à jour proposée depuis GitHub
 const up = await api.update();
 assert(up.available && up.latest === '1.0.9' && up.current === '1.0.0' && up.url.endsWith('/v1.0.9/Radar.apk'), 'nouvelle version GitHub détectée avec le bon fichier');
