@@ -26,6 +26,16 @@ public final class Http {
     private Http() {}
 
     public static String request(String reqJson) {
+        String first = attempt(reqJson);
+        // Coupure réseau passagère (changement 5G / Wi-Fi) : deux nouveaux essais.
+        for (int i = 0; i < 2 && first.contains("\"error\"") && first.contains("UnknownHost"); i++) {
+            try { Thread.sleep(2000L * (i + 1)); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            first = attempt(reqJson);
+        }
+        return first;
+    }
+
+    private static String attempt(String reqJson) {
         try {
             JSONObject req = new JSONObject(reqJson);
             String method = req.optString("method", "GET").toUpperCase(Locale.ROOT);

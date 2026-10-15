@@ -12,7 +12,8 @@ window.RadarBridge = {
     log.push(req);
     setTimeout(() => {
       let res;
-      if (req.url.includes('generativelanguage')) {
+      if (req.url.includes('generativelanguage') && globalThis.__offline) res = { error: 'UnknownHostException : Unable to resolve host "generativelanguage.googleapis.com": No address associated with hostname' };
+      else if (req.url.includes('generativelanguage')) {
         res = { status: 200, url: req.url, headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok": true}' }] } }] }) };
       } else if (req.url.includes('api.tavily.com')) res = { status: 200, url: req.url, headers: {}, body: '{"results":[]}' };
@@ -41,6 +42,13 @@ await api.setup({ search_key: 'tvly-TEST-1234567890' });
 const r2 = await api.refresh('auto');
 const tv = log.filter(x => x.url.includes('api.tavily.com')).length - n0;
 assert(r2.collected === 0 && tv > 2, `clé Tavily ajoutée en cours de journée : recherche web lancée au passage suivant (${tv - 1} requêtes)`);
+b.db.prepare(`INSERT INTO raw_items (id, topic_id, title_key, url, title, snippet, content, source_id, source_name, lang, kind, published_at, fetched_at, status) VALUES ('n1','find-x10-ultra','k1','https://x/1','Find X10 Ultra test','s','', 'x','x','en','target',1,1,'pending')`).run();
+globalThis.__offline = true;
+b.db.prepare("UPDATE meta SET value='0' WHERE key='lock'").run();
+const r3 = await api.refresh('auto');
+const row = b.db.prepare("SELECT status, attempts FROM raw_items WHERE id='n1'").get();
+assert(row.status === 'pending' && Number(row.attempts) === 0 && /pas de connexion Internet/.test(r3.errors.join(' ')), 'coupure réseau : article gardé en attente, message clair');
+globalThis.__offline = false;
 const st = await api.status();
 assert(st.device.platform === 'android' && st.device.batteryExempt === false, 'infos du téléphone dans les réglages');
 try { await api.card('inconnue'); assert(false, 'erreur 404'); } catch (e) { assert(e.status === 404, 'erreurs remontées à l\'interface'); }

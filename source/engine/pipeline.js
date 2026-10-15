@@ -8,10 +8,15 @@ import { searchConfigured, webSearch, pickQueries, DAILY_BUDGET } from './websea
 
 const DAY = 86400000;
 const BATCH = 6;
+const LOCK_MS = 4 * 60 * 1000;      // verrou abandonné (application fermée en pleine passe) libéré après 4 min
 export const RELIABILITY = ['unverified', 'rumor', 'reliable', 'official'];
 const relRank = r => Math.max(0, RELIABILITY.indexOf(r));
 const normRel = r => (RELIABILITY.includes(r) ? r : 'unverified');
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+// Coupure réseau (téléphone hors ligne, ou application privée d'Internet en arrière-plan).
+export const isNetworkError = m => /UnknownHost|Unable to resolve|No address associated|ConnectException|SocketException|NoRouteToHost|délai dépassé|timeout|Network is unreachable/i.test(String(m || ''));
+export const NETWORK_MSG = "pas de connexion Internet pour Radar (réseau coupé, ou application bloquée en arrière-plan par l'économie de batterie ou de données)";
+
 const REL_FR = { official: 'Officiel', reliable: 'Fiable', rumor: 'Rumeur', unverified: 'Non vérifié' };
 
 // ---------- Méta-données ----------
@@ -241,6 +246,7 @@ async function analyze(env, topicsById, now, stats) {
   try {
     out = await callAI(env, analysisSystem(topic), analysisUser(topic, { items: pending, cards: cards || [], specs: specs || [] }));
   } catch (e) {
+    if (isNetworkError(e.message)) throw new Error(NETWORK_MSG);          // rien n'est perdu : nouvel essai plus tard
     await env.DB.batch(pending.map(p => env.DB.prepare(
       `UPDATE raw_items SET attempts = attempts + 1, status = CASE WHEN attempts + 1 >= 6 THEN 'error' ELSE status END, reason = ? WHERE id = ?`
     ).bind(str(e.message, 300), p.id)));
@@ -446,17 +452,23 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000 } = {}) {
   const t0 = Date.now();
   const now = t0;
   const lock = Number((await getMeta(env, 'lock')) || 0);
-  if (now - lock < 10 * 60 * 1000) return { skipped: true, reason: 'Une synchronisation est déjà en cours.' };
+  if (now - lock < LOCK_MS) return { skipped: true, reason: 'Une synchronisation est déjà en cours.' };
   await setMeta(env, 'lock', String(now));
   const stats = { mode, sources: [], collected: 0, analyzed: 0, created: 0, updated: 0, ignored: 0, errors: [], notify: [] };
   try {
     const topics = await loadTopics(env);
     const byId = Object.fromEntries(topics.map(t => [t.id, t]));
     stats.collected = await collect(env, topics, now, mode === 'manual', stats);
+    await setMeta(env, 'lock', String(Date.now()));
+    const failed = stats.sources.filter(s => s.status.startsWith('erreur'));
+    if (stats.sources.length && failed.length === stats.sources.length && failed.every(s => isNetworkError(s.status))) {
+      stats.errors.push(`Collecte : ${NETWORK_MSG}`);
+    }
     if (!aiConfigured(env)) {
       stats.errors.push('Aucune clé IA : les articles sont collectés mais pas encore analysés (Réglages).');
     } else {
       while (Date.now() - t0 < budgetMs) {
+        await setMeta(env, 'lock', String(Date.now()));              // la passe est toujours en vie
         await enrich(env);
         try {
           const n = await analyze(env, byId, now, stats);

@@ -131,6 +131,13 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, onTopicsCh
           )}
           {status && <p className="mt-1 text-xs text-muted">Articles en attente d'analyse : {status.pending}</p>}
           {status?.last_error && <p className="mt-3 rounded-2xl bg-red-500/10 p-3 text-xs text-red-200 ring-1 ring-red-400/20">{status.last_error}</p>}
+          {/connexion Internet|UnknownHost/.test(status?.last_error || '') && (
+            <p className="mt-2 text-[11px] leading-relaxed text-muted">
+              Rien n'est perdu : les articles restent en attente. Si le message revient alors que le téléphone a du réseau, autorisez Radar en arrière-plan :
+              Paramètres → Applications → Radar → <b>Données mobiles</b> → « Données en arrière-plan » activé, et <b>Batterie</b> → « Non restreinte ».
+              Pensez aussi à un éventuel VPN, bloqueur de publicités ou « DNS privé ».
+            </p>
+          )}
           <Btn onClick={onRefresh} disabled={refreshing} className="mt-4 w-full bg-ink text-bg">{refreshing ? 'Synchronisation en cours…' : 'Actualiser maintenant'}</Btn>
           {refreshMsg && <p className="mt-2 text-xs text-muted">{refreshMsg}</p>}
           <p className="mt-3 text-[11px] leading-relaxed text-faint">

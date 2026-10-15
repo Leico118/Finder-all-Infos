@@ -110,7 +110,7 @@ export default function App() {
         try {
           r = await api.refresh(auto || pass > 1 ? 'auto' : 'manual');
         } catch (e) {
-          if (e.status === 409 && busyTries++ < 6) {           // collecte de fond en cours
+          if (e.status === 409 && busyTries++ < 14) {           // collecte de fond en cours
             setRefreshMsg('Une collecte automatique est en cours, nouvel essai dans 20 secondes…');
             await wait(20000); pass--; continue;
           }
