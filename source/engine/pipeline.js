@@ -14,7 +14,7 @@ const relRank = r => Math.max(0, RELIABILITY.indexOf(r));
 const normRel = r => (RELIABILITY.includes(r) ? r : 'unverified');
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 // Coupure réseau (téléphone hors ligne, ou application privée d'Internet en arrière-plan).
-export const isNetworkError = m => /UnknownHost|Unable to resolve|No address associated|ConnectException|SocketException|NoRouteToHost|délai dépassé|timeout|Network is unreachable/i.test(String(m || ''));
+export const isNetworkError = m => /UnknownHost|Unable to resolve|No address associated|ConnectException|SocketException|SSLException|EOFException|NoRouteToHost|délai dépassé|timeout|Network is unreachable/i.test(String(m || ''));
 export const NETWORK_MSG = "pas de connexion Internet pour Radar (réseau coupé, ou application bloquée en arrière-plan par l'économie de batterie ou de données)";
 
 const REL_FR = { official: 'Officiel', reliable: 'Fiable', rumor: 'Rumeur', unverified: 'Non vérifié' };
@@ -226,7 +226,7 @@ async function enrich(env, max = 6) {
 }
 
 // ---------- Analyse IA ----------
-async function analyze(env, topicsById, now, stats) {
+async function analyze(env, topicsById, now, stats, stillOwner = async () => true) {
   const first = await env.DB.prepare(
     `SELECT topic_id FROM raw_items WHERE status = 'pending' AND content IS NOT NULL ORDER BY fetched_at, published_at DESC LIMIT 1`).first();
   if (!first) return 0;
@@ -246,12 +246,13 @@ async function analyze(env, topicsById, now, stats) {
   try {
     out = await callAI(env, analysisSystem(topic), analysisUser(topic, { items: pending, cards: cards || [], specs: specs || [] }));
   } catch (e) {
-    if (isNetworkError(e.message)) throw new Error(NETWORK_MSG);          // rien n'est perdu : nouvel essai plus tard
+    if (isNetworkError(e.message)) throw new Error(`${NETWORK_MSG} [détail : ${str(e.message, 160)}]`);  // rien n'est perdu
     await env.DB.batch(pending.map(p => env.DB.prepare(
       `UPDATE raw_items SET attempts = attempts + 1, status = CASE WHEN attempts + 1 >= 6 THEN 'error' ELSE status END, reason = ? WHERE id = ?`
     ).bind(str(e.message, 300), p.id)));
     throw e;
   }
+  if (!(await stillOwner())) return -1;                                   // une autre passe a pris la main : résultat ignoré
   await applyAnalysis(env, topic, pending, cards || [], out || {}, now, stats);
   return pending.length;
 }
@@ -446,20 +447,40 @@ async function sendNotifications(env, list) {
   }
 }
 
+function preempted(stats) {
+  delete stats.notify;
+  return { ...stats, preempted: true };
+}
+
 // ---------- Passe complète ----------
 // mode : 'manual' (bouton Actualiser), 'auto' (ouverture de l'appli), 'background' (tâche de fond horaire).
+// Verrou « horodatage|instance|mode ». L'application ouverte (manual/auto) reprend la main sur une passe
+// de fond ou sur une passe abandonnée (application fermée) ; la tâche de fond, elle, n'interrompt jamais rien.
+const INSTANCE = Math.random().toString(36).slice(2, 10);
+function parseLock(v) {
+  const [ts, owner = '', m = ''] = String(v || '0').split('|');
+  return { ts: Number(ts) || 0, owner, mode: m };
+}
+export async function ownsLock(env, token) {
+  return parseLock(await getMeta(env, 'lock')).owner === token;
+}
+
 export async function tick(env, { mode = 'auto', budgetMs = 75000 } = {}) {
   const t0 = Date.now();
   const now = t0;
-  const lock = Number((await getMeta(env, 'lock')) || 0);
-  if (now - lock < LOCK_MS) return { skipped: true, reason: 'Une synchronisation est déjà en cours.' };
-  await setMeta(env, 'lock', String(now));
+  const cur = parseLock(await getMeta(env, 'lock'));
+  const fresh = now - cur.ts < LOCK_MS;
+  if (fresh && (mode === 'background' || cur.owner === INSTANCE)) return { skipped: true, reason: 'Une synchronisation est déjà en cours.' };
+  const token = `${INSTANCE}-${now}`;
+  const stamp = () => setMeta(env, 'lock', `${Date.now()}|${token}|${mode}`);
+  await stamp();
   const stats = { mode, sources: [], collected: 0, analyzed: 0, created: 0, updated: 0, ignored: 0, errors: [], notify: [] };
   try {
     const topics = await loadTopics(env);
     const byId = Object.fromEntries(topics.map(t => [t.id, t]));
     stats.collected = await collect(env, topics, now, mode === 'manual', stats);
-    await setMeta(env, 'lock', String(Date.now()));
+    if (!(await ownsLock(env, token))) return preempted(stats);
+    await stamp();
     const failed = stats.sources.filter(s => s.status.startsWith('erreur'));
     if (stats.sources.length && failed.length === stats.sources.length && failed.every(s => isNetworkError(s.status))) {
       stats.errors.push(`Collecte : ${NETWORK_MSG}`);
@@ -468,10 +489,12 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000 } = {}) {
       stats.errors.push('Aucune clé IA : les articles sont collectés mais pas encore analysés (Réglages).');
     } else {
       while (Date.now() - t0 < budgetMs) {
-        await setMeta(env, 'lock', String(Date.now()));              // la passe est toujours en vie
+        if (!(await ownsLock(env, token))) return preempted(stats);  // l'application ouverte a pris la main
+        await stamp();                                                // la passe est toujours en vie
         await enrich(env);
         try {
-          const n = await analyze(env, byId, now, stats);
+          const n = await analyze(env, byId, now, stats, () => ownsLock(env, token));
+          if (n < 0) return preempted(stats);
           stats.analyzed += n;
           if (!n) break;
         } catch (e) {
@@ -484,14 +507,16 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000 } = {}) {
     const srcErr = stats.sources.filter(s => !s.status.startsWith('ok'));
     if (stats.collected) await setMeta(env, 'last_collect', String(now));
     await setMeta(env, 'last_sync', String(now));
-    await setMeta(env, 'last_error', stats.errors.join(' | '));
+    // Une passe de fond privée de réseau (veille Android) n'efface pas l'état de la dernière passe utile.
+    const bgNetOnly = mode === 'background' && stats.errors.length && stats.errors.every(e => e.includes(NETWORK_MSG)) && !stats.analyzed;
+    if (!bgNetOnly) await setMeta(env, 'last_error', stats.errors.join(' | '));
     await setMeta(env, 'last_summary', JSON.stringify({
       at: now, mode, topics: stats.collected, sources: stats.sources.length, sourceErrors: srcErr.length,
       newItems: stats.sources.reduce((n, s) => n + (s.inserted || 0), 0),
       analyzed: stats.analyzed, created: stats.created, updated: stats.updated, ignored: stats.ignored,
     }));
   } finally {
-    await setMeta(env, 'lock', '0');
+    if (await ownsLock(env, token)) await setMeta(env, 'lock', '0');
   }
   stats.pending = (await env.DB.prepare(`SELECT COUNT(*) AS n FROM raw_items WHERE status = 'pending'`).first())?.n || 0;
   delete stats.notify;

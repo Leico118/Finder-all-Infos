@@ -17,10 +17,12 @@ function extractJson(text) {
 let preferred = null;
 const MODELS = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-2.5-flash-lite'];
 
+const NET_ERR = /UnknownHost|Unable to resolve|No address associated|ConnectException|SocketException|NoRouteToHost|SSLException|EOFException|Network is unreachable|connexion/i;
+
 async function callGemini(env, system, user) {
   const models = env.GEMINI_MODEL ? [env.GEMINI_MODEL] : (preferred ? [preferred, ...MODELS.filter(m => m !== preferred)] : MODELS);
   const ms = env.aiTimeout || 60000;
-  const errors = [];
+  const errors = [], netErrors = [];
   for (const model of models) {
     try {
       const res = await http(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -46,10 +48,17 @@ async function callGemini(env, system, user) {
     } catch (e) {
       const slow = e.name === 'AbortError' || e.name === 'TimeoutError' || /délai|timeout/i.test(e.message);
       if (e.code === 400 || e.code === 401 || e.code === 403) throw new Error(`Clé Gemini refusée (${e.code}) : vérifiez-la dans Réglages.`);
+      if (!e.code && NET_ERR.test(e.message)) {                       // coupure passagère : modèle suivant après une pause
+        netErrors.push(e.message);
+        if (netErrors.length >= 3) throw new Error(netErrors[netErrors.length - 1]);
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
+      }
       if (!slow && ![404, 429, 500, 503].includes(e.code) && !(e instanceof SyntaxError) && !/JSON/.test(e.message)) throw e;
       errors.push(`${model} : ${slow ? 'trop lent' : e.code ? `erreur ${e.code}` : 'réponse illisible'}`);
     }
   }
+  if (netErrors.length && !errors.length) throw new Error(netErrors[netErrors.length - 1]);
   throw new Error(`aucun modèle Gemini n'a répondu (${errors.join(' ; ')})`);
 }
 

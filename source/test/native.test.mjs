@@ -14,6 +14,7 @@ window.RadarBridge = {
       let res;
       if (req.url.includes('generativelanguage') && globalThis.__offline) res = { error: 'UnknownHostException : Unable to resolve host "generativelanguage.googleapis.com": No address associated with hostname' };
       else if (req.url.includes('generativelanguage')) {
+        if (globalThis.__steal) b.db.prepare(`UPDATE meta SET value='${Date.now()}|appli-ouverte|manual' WHERE key='lock'`).run();
         res = { status: 200, url: req.url, headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok": true}' }] } }] }) };
       } else if (req.url.includes('api.tavily.com')) res = { status: 200, url: req.url, headers: {}, body: '{"results":[]}' };
@@ -49,6 +50,21 @@ const r3 = await api.refresh('auto');
 const row = b.db.prepare("SELECT status, attempts FROM raw_items WHERE id='n1'").get();
 assert(row.status === 'pending' && Number(row.attempts) === 0 && /pas de connexion Internet/.test(r3.errors.join(' ')), 'coupure réseau : article gardé en attente, message clair');
 globalThis.__offline = false;
+// Verrous : l'application ouverte reprend la main ; la tâche de fond n'interrompt rien.
+b.db.prepare(`UPDATE meta SET value='${Date.now()}|fond-123|background' WHERE key='lock'`).run();
+let r4; try { r4 = await api.refresh('auto'); } catch (e) { r4 = e; }
+assert(r4 && !r4.status && Array.isArray(r4.errors), 'passe de fond en cours : l\'appli ouverte prend la main sans attendre');
+b.db.prepare(`UPDATE meta SET value='${Date.now()}|appli-ouverte|manual' WHERE key='lock'`).run();
+let r5; try { r5 = await api.refresh('background'); } catch (e) { r5 = e; }
+assert(r5.status === 409, 'tâche de fond : n\'interrompt pas l\'appli ouverte');
+b.db.prepare("UPDATE meta SET value='0' WHERE key='lock'").run();
+b.db.prepare("UPDATE raw_items SET status='pending', attempts=0 WHERE id='n1'").run();
+globalThis.__steal = true;
+const r6 = await api.refresh('background');
+globalThis.__steal = false;
+const row6 = b.db.prepare("SELECT status FROM raw_items WHERE id='n1'").get();
+const lock6 = b.db.prepare("SELECT value FROM meta WHERE key='lock'").get().value;
+assert(r6.preempted && row6.status === 'pending' && lock6.includes('appli-ouverte'), 'passe de fond reprise par l\'appli : s\'arrête sans rien appliquer ni libérer le verrou');
 const st = await api.status();
 assert(st.device.platform === 'android' && st.device.batteryExempt === false, 'infos du téléphone dans les réglages');
 try { await api.card('inconnue'); assert(false, 'erreur 404'); } catch (e) { assert(e.status === 404, 'erreurs remontées à l\'interface'); }
