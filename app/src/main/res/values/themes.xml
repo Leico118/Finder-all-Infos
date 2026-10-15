@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="radar_bg">#0A0A0C</color>
+    <style name="Theme.Radar" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/radar_bg</item>
+        <item name="android:colorBackground">@color/radar_bg</item>
+        <item name="android:statusBarColor">@color/radar_bg</item>
+        <item name="android:navigationBarColor">@color/radar_bg</item>
+        <item name="android:colorAccent">#D9C4A3</item>
+    </style>
+</resources>

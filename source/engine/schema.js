@@ -1,0 +1,33 @@
+// Schéma SQLite local (version 2 : multi-sujets).
+export const SCHEMA_VERSION = '2';
+
+export const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
+  `CREATE TABLE IF NOT EXISTS topics (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, config TEXT,
+     position INTEGER DEFAULT 0, created_at INTEGER, updated_at INTEGER)`,
+  `CREATE TABLE IF NOT EXISTS topic_state (topic_id TEXT PRIMARY KEY, last_collect INTEGER, backfill_done INTEGER DEFAULT 0,
+     web_cursor INTEGER DEFAULT 0, web_cycles INTEGER DEFAULT 0, last_status TEXT)`,
+  `CREATE TABLE IF NOT EXISTS source_state (id TEXT PRIMARY KEY, name TEXT, topic_id TEXT, last_fetched INTEGER, last_ok INTEGER,
+     last_status TEXT, last_new INTEGER DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS raw_items (id TEXT PRIMARY KEY, topic_id TEXT NOT NULL, title_key TEXT, url TEXT NOT NULL,
+     title TEXT, snippet TEXT, content TEXT, source_id TEXT, source_name TEXT, lang TEXT, kind TEXT, published_at INTEGER,
+     fetched_at INTEGER, status TEXT DEFAULT 'pending', reason TEXT, card_id TEXT, attempts INTEGER DEFAULT 0)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_title ON raw_items(topic_id, title_key)`,
+  `CREATE INDEX IF NOT EXISTS idx_raw_status ON raw_items(status, topic_id, published_at)`,
+  `CREATE TABLE IF NOT EXISTS cards (id TEXT PRIMARY KEY, topic_id TEXT NOT NULL, category TEXT NOT NULL, reliability TEXT NOT NULL,
+     title TEXT, summary TEXT, detail TEXT, technical TEXT, origin TEXT, reliability_reason TEXT, spec_keys TEXT,
+     official_confirmation INTEGER DEFAULT 0, contradiction TEXT, competitor_brand TEXT, competitor_model TEXT,
+     competitor_why TEXT, competitor_comparison TEXT, importance INTEGER DEFAULT 1, first_seen_at INTEGER, latest_at INTEGER,
+     created_at INTEGER, updated_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS idx_cards_latest ON cards(topic_id, latest_at)`,
+  `CREATE TABLE IF NOT EXISTS card_sources (card_id TEXT NOT NULL, url TEXT NOT NULL, title TEXT, source_name TEXT, lang TEXT,
+     published_at INTEGER, added_at INTEGER, PRIMARY KEY (card_id, url))`,
+  `CREATE TABLE IF NOT EXISTS card_history (id INTEGER PRIMARY KEY AUTOINCREMENT, card_id TEXT NOT NULL, at INTEGER, kind TEXT, note TEXT)`,
+  `CREATE INDEX IF NOT EXISTS idx_hist_card ON card_history(card_id, at)`,
+  `CREATE TABLE IF NOT EXISTS card_reads (card_id TEXT PRIMARY KEY, read_at INTEGER)`,
+  `CREATE TABLE IF NOT EXISTS specs (topic_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT, reliability TEXT, card_id TEXT,
+     source_url TEXT, source_name TEXT, source_date INTEGER, updated_at INTEGER, PRIMARY KEY (topic_id, key))`,
+  `CREATE TABLE IF NOT EXISTS spec_history (id INTEGER PRIMARY KEY AUTOINCREMENT, topic_id TEXT NOT NULL, key TEXT NOT NULL,
+     value TEXT, reliability TEXT, card_id TEXT, note TEXT, accepted INTEGER, at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS idx_spec_hist ON spec_history(topic_id, key, at)`,
+];
