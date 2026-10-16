@@ -231,7 +231,7 @@ export default function App() {
           onTopicsChanged={() => { loadTopics(); load(); }} focusTopics={route.topics} simple={simple} onModeChange={changeMode} />
       )}
 
-      <nav className="nav-safe fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/85 backdrop-blur-xl">
+      <nav className="app-nav nav-safe fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/85 backdrop-blur-xl">
         <ul className="mx-auto flex max-w-xl justify-around px-2 pt-2">
           {tabs.map(({ id, hash, label, Icon, badge }) => {
             const active = activeTab === id;

@@ -54,3 +54,77 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ================= Thèmes ================= */
+/* Les couleurs de base (thème Noir) sont dans @theme ; chaque thème les remplace. La teinte choisie
+   arrive par --color-accent (et --tint pour le fond du thème Verre), posées par theme.js. */
+
+/* ---- Verre : bulles translucides sur fond dégradé coloré ---- */
+html[data-theme="verre"] {
+  --tint: #e2b45e;
+  --color-bg: #14100b;
+  --color-surface: rgb(255 255 255 / 0.075);
+  --color-surface-2: rgb(255 255 255 / 0.12);
+  --color-line: rgb(255 255 255 / 0.14);
+  --color-ink: #f7f3ec;
+  --color-muted: rgb(247 243 236 / 0.68);
+  --color-faint: rgb(247 243 236 / 0.44);
+}
+html[data-theme="verre"] body { background: #110e0a; }
+html[data-theme="verre"] body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(85% 55% at 10% 0%, color-mix(in srgb, var(--tint) 62%, transparent) 0%, transparent 72%),
+    radial-gradient(70% 50% at 100% 100%, color-mix(in srgb, var(--tint) 26%, transparent) 0%, transparent 70%),
+    linear-gradient(165deg, color-mix(in srgb, var(--tint) 42%, #1b150e) 0%, color-mix(in srgb, var(--tint) 16%, #120f0b) 55%, #0e0c0a 100%);
+}
+html[data-theme="verre"] [class*="bg-surface"] {
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.14), 0 12px 32px -14px rgb(0 0 0 / 0.5);
+}
+html[data-theme="verre"] .rounded-3xl { border-radius: 1.85rem; }
+html[data-theme="verre"] .app-nav {
+  left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 10px);
+  border: 1px solid var(--color-line); border-radius: 30px;
+  background: rgb(28 24 20 / 0.55);
+  -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 16px 40px -12px rgb(0 0 0 / 0.6);
+  padding-bottom: 6px;
+}
+html[data-theme="verre"] .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 7rem); }
+html[data-theme="verre"] .simple-ui .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 9rem); }
+
+/* ---- Papier : clair, titres à empattements, comme un journal ---- */
+html[data-theme="papier"] {
+  --color-bg: #f3efe6;
+  --color-surface: #fffdf8;
+  --color-surface-2: #ebe6da;
+  --color-line: rgb(45 35 20 / 0.12);
+  --color-ink: #1f1c17;
+  --color-muted: #5c564c;
+  --color-faint: #8b8478;
+}
+html[data-theme="papier"] h1, html[data-theme="papier"] li h2 { font-family: Georgia, "Noto Serif", "Times New Roman", serif; letter-spacing: 0; }
+html[data-theme="papier"] [class*="bg-surface"] { box-shadow: 0 1px 2px rgb(60 45 20 / 0.06), 0 8px 24px -16px rgb(60 45 20 / 0.25); }
+html[data-theme="papier"] .bg-white\/5 { background-color: rgb(0 0 0 / 0.05); }
+html[data-theme="papier"] .text-emerald-200, html[data-theme="papier"] .text-emerald-300 { color: #047857; }
+html[data-theme="papier"] .text-sky-300 { color: #0369a1; }
+html[data-theme="papier"] .text-orange-300 { color: #c2410c; }
+html[data-theme="papier"] .text-red-200, html[data-theme="papier"] .text-red-300 { color: #b91c1c; }
+html[data-theme="papier"] .text-amber-200, html[data-theme="papier"] .text-amber-300 { color: #a16207; }
+html[data-theme="papier"] .text-zinc-300 { color: #52525b; }
+
+/* ---- Contraste : lisibilité maximale ---- */
+html[data-theme="contraste"] {
+  --color-bg: #000000;
+  --color-surface: #0c0c0c;
+  --color-surface-2: #1d1d1d;
+  --color-line: rgb(255 255 255 / 0.4);
+  --color-ink: #ffffff;
+  --color-muted: #ededed;
+  --color-faint: #c9c9c9;
+  --color-accent: #ffd60a;
+}
+html[data-theme="contraste"] body { font-weight: 500; }
+html[data-theme="contraste"] [class*="text-ink\/"] { color: #ffffff; }

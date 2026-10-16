@@ -9,6 +9,7 @@ import { formatDateTime, timeAgo } from '../util.js';
 import Topics from './Topics.jsx';
 import { BigButton } from './Simple.jsx';
 import { ShareKeys, ReceiveKeys } from './KeyTransfer.jsx';
+import ThemePicker from './ThemePicker.jsx';
 
 const input = 'w-full rounded-2xl bg-surface-2 px-4 py-3 text-sm text-ink ring-1 ring-line outline-none focus:ring-accent/60';
 const Btn = ({ children, className = '', ...p }) => (
@@ -206,6 +207,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
             </section>
           )}
 
+          <ThemePicker simple />
           <ModeBlock simple onModeChange={onModeChange} />
         </div>
       </div>
@@ -404,6 +406,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
           </ul>
         </Block>
 
+        <ThemePicker />
         {onModeChange && <ModeBlock simple={false} onModeChange={onModeChange} />}
 
         {status?.legacy?.cards > 0 && (

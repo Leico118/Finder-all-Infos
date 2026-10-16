@@ -133,6 +133,22 @@ public final class RadarBridge {
         if (hour >= 0 && hour <= 23) RadarApp.setDailyHour(ctx, hour);
     }
 
+    /** Couleur des barres d'Android (heure, batterie, navigation) assortie au thème choisi. */
+    @JavascriptInterface
+    public void setSystemBars(final String color, final boolean lightBackground) {
+        if (activity == null) return;
+        main.post(() -> {
+            try {
+                int c = (int) Long.parseLong(color.replace("#", "").length() == 6 ? "FF" + color.replace("#", "") : color.replace("#", ""), 16);
+                android.view.Window w = activity.getWindow();
+                w.setStatusBarColor(c);
+                w.setNavigationBarColor(c);
+                // 0x2000 : icônes sombres en haut ; 0x10 : icônes sombres en bas (fond clair)
+                w.getDecorView().setSystemUiVisibility(lightBackground ? (0x2000 | 0x10) : 0);
+            } catch (Exception ignored) { /* couleur invalide : barres inchangées */ }
+        });
+    }
+
     // ---------- Installer Radar chez un proche ----------
     @JavascriptInterface
     public String qrMatrix(String text) {
