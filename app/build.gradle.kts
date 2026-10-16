@@ -10,8 +10,8 @@ android {
         applicationId = "com.leico.radar"
         minSdk = 30
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 11
+        versionName = "1.1.0"
     }
 
     signingConfigs {

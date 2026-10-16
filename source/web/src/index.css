@@ -45,6 +45,7 @@ body {
   overscroll-behavior-y: contain;
 }
 .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 5.5rem); }
+.simple-ui .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 7.5rem); }
 .pt-safe { padding-top: calc(env(safe-area-inset-top) + 1rem); }
 .nav-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem); }
 .no-scrollbar::-webkit-scrollbar { display: none; }

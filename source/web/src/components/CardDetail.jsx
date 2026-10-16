@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { ReliabilityBadge, CompetitorBadge, RELIABILITY } from './Badge.jsx';
 import { IconBack, IconExternal, IconAlert } from './Icons.jsx';
 import { formatDate, formatDateTime, hostOf, LANG_FR } from '../util.js';
+import { SimpleCardDetail } from './Simple.jsx';
 
 const HIST_LABEL = {
   created: 'Création', updated: 'Mise à jour', source: 'Nouvelle source', reliability: 'Fiabilité',
@@ -23,7 +24,7 @@ function Paragraphs({ text }) {
   return <div className="prose-fr text-[15px] leading-relaxed text-ink/90">{parts.map((p, i) => <p key={i}>{p}</p>)}</div>;
 }
 
-export default function CardDetail({ id, onBack, onRead }) {
+export default function CardDetail({ id, onBack, onRead, simple = false }) {
   const [card, setCard] = useState(null);
   const [error, setError] = useState('');
 
@@ -44,14 +45,16 @@ export default function CardDetail({ id, onBack, onRead }) {
 
   return (
     <div className="pt-safe pb-safe px-4 animate-fade">
-      <button onClick={onBack} className="mb-4 -ml-2 flex items-center gap-1 rounded-full px-2 py-1.5 text-sm text-muted active:text-ink">
-        <IconBack /> Actualités
+      <button onClick={onBack} className={`mb-4 -ml-2 flex items-center gap-1 rounded-full px-2 py-1.5 text-muted active:text-ink ${simple ? 'text-[18px]' : 'text-sm'}`}>
+        <IconBack /> {simple ? 'Retour' : 'Actualités'}
       </button>
 
       {error && <div className="rounded-3xl bg-surface p-5 text-sm text-red-300 ring-1 ring-red-400/20">{error}</div>}
       {!card && !error && <div className="h-64 animate-pulse rounded-3xl bg-surface" />}
 
-      {card && (
+      {card && simple && <SimpleCardDetail card={card} onBack={onBack} />}
+
+      {card && !simple && (
         <div className="space-y-3">
           <header className="px-1 pb-2 animate-rise">
             {topicName && <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-accent/80">{topicName}</p>}

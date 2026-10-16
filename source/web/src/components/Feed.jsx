@@ -1,17 +1,8 @@
 import { ReliabilityBadge, CompetitorBadge, Chip } from './Badge.jsx';
 import { IconRefresh, IconAlert } from './Icons.jsx';
-import { cardDate, timeAgo } from '../util.js';
+import { cardDate, timeAgo, monthKey, monthLabel } from '../util.js';
 import { useEffect, useRef, useState } from 'react';
 import RefreshProgress from './RefreshProgress.jsx';
-
-// Séparateurs par mois (date de la dernière information de la carte).
-const monthKey = ts => { if (!ts) return ''; const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth()}`; };
-function monthLabel(ts) {
-  if (!ts) return 'Date inconnue';
-  const d = new Date(ts);
-  const m = d.toLocaleDateString('fr-FR', { month: 'long' });
-  return d.getFullYear() === new Date().getFullYear() ? m : `${m} ${d.getFullYear()}`;
-}
 
 export default function Feed({ topics, topic, setTopic, filter, setFilter, data, loading, error, refreshing, refreshMsg, progress, fresh = 0, onRefresh, onOpen, onReadAll }) {
   // Cartes arrivées pendant la lecture : si l'utilisateur a fait défiler la liste, un bouton le ramène en haut.
@@ -143,7 +134,7 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
         <div className="rounded-3xl bg-surface p-6 text-center ring-1 ring-line">
           <p className="text-sm text-ink">Aucune actualité ici pour le moment.</p>
           <p className="mt-2 text-xs leading-relaxed text-muted">
-            Les sources sont interrogées chaque jour à 8 h, puis les articles sont analysés petit à petit. Seules les informations
+            Les sources sont interrogées avec « Actualiser » ou chaque jour à l'heure choisie dans Réglages, puis les articles sont analysés petit à petit. Seules les informations
             réellement publiées apparaissent : un sujet tout juste ajouté se remplit au fil de la première collecte.
           </p>
         </div>

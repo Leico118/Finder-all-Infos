@@ -27,3 +27,22 @@ export function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
 export const LANG_FR = { en: 'anglais', zh: 'chinois', fr: 'français', de: 'allemand', es: 'espagnol' };
+
+// Séparateurs par mois (date de la dernière information de la carte).
+export const monthKey = ts => { if (!ts) return ''; const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth()}`; };
+export function monthLabel(ts) {
+  if (!ts) return 'Date inconnue';
+  const d = new Date(ts);
+  const m = d.toLocaleDateString('fr-FR', { month: 'long' });
+  return d.getFullYear() === new Date().getFullYear() ? m : `${m} ${d.getFullYear()}`;
+}
+// Date en toutes lettres pour le mode simplifié : « aujourd'hui », « hier », « mardi 14 octobre ».
+export function plainDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts), today = new Date();
+  const days = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 86400000);
+  if (days === 0) return 'Aujourd\'hui';
+  if (days === 1) return 'Hier';
+  const s = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', ...(d.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}) });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}

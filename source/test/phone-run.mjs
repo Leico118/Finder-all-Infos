@@ -18,6 +18,8 @@ const p = await ctx.newPage();
 const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => m.type() === 'error' && errs.push(m.text()));
 const shot = n => p.screenshot({ path: `${out}/p-${n}.png` });
 await p.goto('http://localhost:5175/index.html'); await p.waitForTimeout(3000); await shot('1-first');
+const welcome = await p.isVisible('text=Bienvenue');                     // premier lancement : choix du mode
+if (welcome) { await p.click('text=Mode complet'); await p.waitForTimeout(1000); }
 await p.goto('http://localhost:5175/index.html#/reglages'); await p.waitForTimeout(1500);
 await p.fill('#gemini-key', 'AIzaGOOD-1234567890'); await p.click('text=Vérifier et enregistrer >> nth=0'); await p.waitForTimeout(1500);
 await p.fill('#tavily-key', 'tvly-GOOD-1234567890'); await p.click('text=Vérifier et enregistrer'); await p.waitForTimeout(1500);
@@ -31,5 +33,6 @@ await p.click('li button >> nth=0'); await p.waitForTimeout(1500); await shot('4
 await p.goto('http://localhost:5175/index.html#/fiche'); await p.waitForTimeout(1500); await shot('5-specs');
 const notes = await (await p.request.get('http://localhost:5175/__notifications')).json();
 console.log(JSON.stringify({ errors: errs, battery, notifications: notes.map(n => n.title),
-  hasX10: text.includes('8 000 mAh'), hasByd: text.includes('BYD lance'), legacy: text.includes('LOFIC') }));
+  hasX10: text.includes('8 000 mAh'), hasByd: text.includes('BYD lance'), welcome,
+  legacy: text.includes('LOFIC') }));
 await b.close();

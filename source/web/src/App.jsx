@@ -4,6 +4,7 @@ import Feed from './components/Feed.jsx';
 import CardDetail from './components/CardDetail.jsx';
 import Specs from './components/Specs.jsx';
 import Settings from './components/Settings.jsx';
+import { SimpleFeed, Welcome } from './components/Simple.jsx';
 import { IconNews, IconSpecs, IconSettings } from './components/Icons.jsx';
 
 const store = {
@@ -22,6 +23,8 @@ function parseHash() {
 
 export default function App() {
   const [route, setRoute] = useState(parseHash);
+  // Mode d'affichage : 'simple' ou 'full' ; 'welcome' au premier lancement (choix proposé). Copie locale pour un affichage immédiat.
+  const [mode, setMode] = useState(() => store.get('radar-mode') || '');
   const [topics, setTopics] = useState([]);
   const [topic, setTopicState] = useState(() => store.get('radar-topic') || '');
   const [filter, setFilterState] = useState('all');
@@ -56,19 +59,42 @@ export default function App() {
     } catch { /* affiché par la liste */ }
   }, []);
 
+  // Toujours le sujet et le filtre affichés à l'instant (et non ceux du début d'une actualisation),
+  // et seule la réponse la plus récente est affichée : pas de mélange si l'on change de sujet en cours de route.
+  const view = useRef({ filter, topic });
+  view.current = { filter, topic };
+  const loadSeq = useRef(0);
   const load = useCallback(async ({ quiet = false } = {}) => {
+    const seq = ++loadSeq.current;
+    const { filter: f, topic: t } = view.current;
     if (!quiet) setLoading(true);
     try {
-      setData(await api.cards(filter, topic, filter === 'unread' ? unreadSince.current : undefined));
+      const d = await api.cards(f, t, f === 'unread' ? unreadSince.current : undefined);
+      if (seq !== loadSeq.current || view.current.filter !== f || view.current.topic !== t) return;   // réponse dépassée
+      setData(d);
       setError('');
     } catch (e) {
-      setError(e.message);
+      if (seq === loadSeq.current) setError(e.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
-  }, [filter, topic]);
+  }, []);
 
   useEffect(() => { loadTopics(); }, []);
+  useEffect(() => {
+    api.status().then(st => {
+      const m = st.ui_mode || (st.ai?.configured ? 'full' : 'welcome');   // installation existante : mode complet
+      setMode(m);
+      if (m !== 'welcome') store.set('radar-mode', m);
+    }).catch(() => setMode(m => m || 'full'));
+  }, []);
+  const changeMode = async m => {
+    setMode(m);
+    store.set('radar-mode', m);
+    if (m === 'simple') { setFilterState('all'); if (route.view === 'specs') window.location.hash = '#/'; }
+    try { await api.setup({ ui_mode: m }); } catch { /* conservé localement */ }
+  };
+  const simple = mode === 'simple';
   useEffect(() => { load(); }, [filter, topic]);
 
   const setTopic = id => {
@@ -176,25 +202,33 @@ export default function App() {
   const unread = Object.values(data?.unread_by_topic || {}).reduce((a, b) => a + b, 0);
   const tabs = [
     { id: 'feed', hash: '#/', label: 'Actualités', Icon: IconNews, badge: unread },
-    { id: 'specs', hash: '#/fiche', label: 'Fiche technique', Icon: IconSpecs },
+    ...(simple ? [] : [{ id: 'specs', hash: '#/fiche', label: 'Fiche technique', Icon: IconSpecs }]),
     { id: 'settings', hash: '#/reglages', label: 'Réglages', Icon: IconSettings },
   ];
   const activeTab = route.view === 'card' ? 'feed' : route.view;
   const currentTopic = topics.find(t => t.id === topic);
 
+  if (mode === 'welcome') {
+    return <div className="mx-auto min-h-screen max-w-xl"><Welcome onChoose={m => { changeMode(m); window.location.hash = '#/reglages'; }} /></div>;
+  }
+
   return (
-    <div className="mx-auto min-h-screen max-w-xl">
-      {route.view === 'feed' && (
+    <div className={`mx-auto min-h-screen max-w-xl ${simple ? 'simple-ui' : ''}`}>
+      {route.view === 'feed' && simple && (
+        <SimpleFeed topics={topics} topic={topic} setTopic={setTopic} data={data} loading={loading} error={error}
+          refreshing={refreshing} refreshMsg={refreshMsg} progress={progress} onRefresh={() => refresh()} onOpen={id => go(`#/carte/${id}`)} />
+      )}
+      {route.view === 'feed' && !simple && (
         <Feed topics={topics} topic={topic} setTopic={setTopic} filter={filter} setFilter={setFilter} data={data} loading={loading}
           error={error} refreshing={refreshing} refreshMsg={refreshMsg} progress={progress} fresh={fresh}
           onRefresh={() => refresh()} onOpen={id => go(`#/carte/${id}`)}
           onReadAll={readAll} />
       )}
-      {route.view === 'card' && <CardDetail id={route.id} onBack={back} onRead={() => load()} />}
-      {route.view === 'specs' && <Specs onOpenCard={id => go(`#/carte/${id}`)} topic={currentTopic?.type === 'product' ? topic : ''} />}
+      {route.view === 'card' && <CardDetail id={route.id} onBack={back} onRead={() => load()} simple={simple} />}
+      {route.view === 'specs' && !simple && <Specs onOpenCard={id => go(`#/carte/${id}`)} topic={currentTopic?.type === 'product' ? topic : ''} />}
       {route.view === 'settings' && (
         <Settings onRefresh={() => refresh()} refreshing={refreshing} refreshMsg={refreshMsg} progress={progress}
-          onTopicsChanged={() => { loadTopics(); load(); }} focusTopics={route.topics} />
+          onTopicsChanged={() => { loadTopics(); load(); }} focusTopics={route.topics} simple={simple} onModeChange={changeMode} />
       )}
 
       <nav className="nav-safe fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/85 backdrop-blur-xl">
@@ -204,9 +238,9 @@ export default function App() {
             return (
               <li key={id} className="flex-1">
                 <button onClick={() => { navigatedInApp.current = false; window.location.hash = hash; }}
-                  className="flex w-full flex-col items-center gap-1 py-1 text-[11px]">
-                  <span className={`relative grid h-8 w-16 place-items-center rounded-full transition ${active ? 'bg-accent/15 text-accent' : 'text-muted'}`}>
-                    <Icon />
+                  className={`flex w-full flex-col items-center gap-1 py-1 ${simple ? 'text-[15px]' : 'text-[11px]'}`}>
+                  <span className={`relative grid place-items-center rounded-full transition ${simple ? 'h-10 w-20' : 'h-8 w-16'} ${active ? 'bg-accent/15 text-accent' : 'text-muted'}`}>
+                    <Icon {...(simple ? { width: 28, height: 28 } : {})} />
                     {badge > 0 && (
                       <span className="absolute -right-0.5 -top-1 min-w-[18px] rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-[18px] text-bg">
                         {badge > 99 ? '99+' : badge}

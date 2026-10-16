@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Tâche de fond lancée toutes les heures par Android : une page invisible exécute le moteur
- * (collecte du jour à partir de 8 h, puis analyse des articles en attente).
+ * (collecte du jour à partir de l'heure choisie, puis analyse des articles en attente).
  */
 public class SyncWorker extends Worker {
     public SyncWorker(@NonNull Context context, @NonNull WorkerParameters params) {
@@ -54,6 +54,8 @@ public class SyncWorker extends Worker {
             }
         });
         Log.i("Radar", "tâche de fond terminée : " + result[0]);
+        // Passage de l'heure choisie : le suivant est programmé pour le lendemain.
+        if (getTags().contains(RadarApp.DAILY_TAG)) RadarApp.scheduleDaily(getApplicationContext(), androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE);
         return Result.success();
     }
 }

@@ -39,6 +39,8 @@ export function createEngine(platform) {
       ANTHROPIC_API_KEY: c.anthropic_key || '',
       TAVILY_API_KEY: c.tavily_key || '',
       AUTO_COLLECT: c.auto_collect !== '0',
+      UI_MODE: c.ui_mode === 'simple' || c.ui_mode === 'full' ? c.ui_mode : '',
+      DAILY_HOUR: /^\d+$/.test(c.daily_hour || '') && Number(c.daily_hour) < 24 ? Number(c.daily_hour) : base.DAILY_HOUR,
       notify: platform.notify,
     };
   }
@@ -177,6 +179,8 @@ export function createEngine(platform) {
       search: { configured: searchConfigured(E) },
       notify_enabled: (await getMeta(E, 'notify_enabled')) !== '0',
       auto_collect: E.AUTO_COLLECT,
+      ui_mode: E.UI_MODE,
+      daily_hour: E.DAILY_HOUR,
       device: platform.info ? await platform.info() : null,
       source_groups: groups,
     });
@@ -265,7 +269,15 @@ export function createEngine(platform) {
   async function setup(E, body) {
     const result = { ok: true };
     if (body?.notify !== undefined) await setMeta(E, 'notify_enabled', body.notify ? '1' : '0');
+    if (body?.ui_mode === 'simple' || body?.ui_mode === 'full') await setCfg('ui_mode', body.ui_mode);
     if (body?.auto_collect !== undefined) await setCfg('auto_collect', body.auto_collect ? '1' : '0');
+    if (body?.daily_hour !== undefined) {
+      const h = Number(body.daily_hour);
+      if (!Number.isInteger(h) || h < 0 || h > 23) return fail('Heure invalide (0 à 23).');
+      await setCfg('daily_hour', String(h));
+      try { await platform.setDailyHour?.(h); } catch { /* reprogrammation facultative */ }
+      result.daily_hour = h;
+    }
     const skey = String(body?.search_key || '').trim();
     if (skey) {
       try { await tavily({ TAVILY_API_KEY: skey }, { query: 'actualités', max_results: 1 }); }

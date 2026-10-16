@@ -27,6 +27,7 @@ window.RadarBridge = {
       window.__radarHttp(id, JSON.stringify(res));
     }, 5);
   },
+  setDailyHour(h) { globalThis.__hour = h; },
   notify() {}, info: () => JSON.stringify({ platform: 'android', version: '1.0.0', notifications: false, batteryExempt: false }),
   requestNotifications() {}, requestBatteryExemption() {}, openUrl() {}, done() {},
 };
@@ -89,6 +90,20 @@ globalThis.__deleteDuring = 'nintendo';
 const rd = await api.refresh('manual');
 const leftovers = b.db.prepare("SELECT (SELECT COUNT(*) FROM cards WHERE topic_id NOT IN (SELECT id FROM topics)) + (SELECT COUNT(*) FROM raw_items WHERE topic_id = 'nintendo') AS n").get().n;
 assert(!globalThis.__deleteDuring && leftovers === 0 && !rd.errors.length, `sujet supprimé pendant l'analyse : rien de créé, restes effacés (${leftovers})`);
+// Heure de la collecte automatique
+await api.setup({ daily_hour: 12 });
+const sh = await api.status();
+assert(sh.daily_hour === 12 && new Date(sh.next_collect).getHours() === 12 && globalThis.__hour === 12, 'heure de collecte changée (12 h), Android reprogrammé');
+let bad; try { await api.setup({ daily_hour: 25 }); } catch (e) { bad = e; }
+assert(bad?.status === 400 && (await api.status()).daily_hour === 12, 'heure invalide refusée');
+await api.setup({ daily_hour: 8 });
+// Mode simplifié mémorisé
+assert((await api.status()).ui_mode === '', 'mode d\'affichage pas encore choisi');
+await api.setup({ ui_mode: 'simple' });
+assert((await api.status()).ui_mode === 'simple', 'mode simplifié mémorisé');
+await api.setup({ ui_mode: 'n-importe-quoi' });
+assert((await api.status()).ui_mode === 'simple', 'valeur de mode invalide ignorée');
+await api.setup({ ui_mode: 'full' });
 // Mise à jour proposée depuis GitHub
 const up = await api.update();
 assert(up.available && up.latest === '1.0.9' && up.current === '1.0.0' && up.url.endsWith('/v1.0.9/Radar.apk'), 'nouvelle version GitHub détectée avec le bon fichier');

@@ -9,6 +9,23 @@ const join = a => (a || []).join(', ');
 
 const EXAMPLES = ['iPhone Duo', 'Galaxy S27 Ultra', 'Xiaomi 18 Pro Max', 'Voitures BYD', 'Nintendo Switch 3'];
 
+function SimpleTopicRow({ t, onChanged }) {
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  return (
+    <li className="flex items-center justify-between gap-3 py-4 first:pt-0 last:pb-0">
+      <span className="min-w-0">
+        <span className="block text-[18px] font-medium text-ink">{t.name}</span>
+        <span className="block text-[15px] text-muted">{t.cards} actualité{t.cards > 1 ? 's' : ''}</span>
+      </span>
+      {!confirm
+        ? <button onClick={() => setConfirm(true)} className="shrink-0 rounded-2xl bg-surface-2 px-4 py-2.5 text-[16px] text-red-300 ring-1 ring-line">Retirer</button>
+        : <button disabled={busy} onClick={async () => { setBusy(true); try { await api.deleteTopic(t.id); onChanged(); } finally { setBusy(false); } }}
+            className="shrink-0 rounded-2xl bg-red-500/80 px-4 py-2.5 text-[16px] font-semibold text-white">Oui, retirer</button>}
+    </li>
+  );
+}
+
 function TopicRow({ t, onChanged }) {
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState({ name: t.name, short: t.short, match: join(t.match), exclude: join(t.exclude), rivals: join(t.rivals), type: t.type });
@@ -91,7 +108,7 @@ function TopicRow({ t, onChanged }) {
 // Création en cours, conservée si l'écran Réglages est quitté puis rouvert pendant que l'IA travaille.
 let pendingAdd = null;
 
-export default function Topics({ onAdded, autoFocus }) {
+export default function Topics({ onAdded, autoFocus, simple = false }) {
   const [data, setData] = useState(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -125,28 +142,36 @@ export default function Topics({ onAdded, autoFocus }) {
   }
 
   const full = data && data.topics.length >= data.max;
+  const sz = simple
+    ? { title: 'mb-1 text-[14px]', help: 'mb-4 text-[16px]', input: `${input} text-[18px] py-4`, btn: 'rounded-2xl px-5 py-4 text-[18px] font-semibold', msg: 'text-[16px]', ex: 'px-4 py-2 text-[16px]' }
+    : { title: 'mb-1 text-[11px]', help: 'mb-4 text-xs', input, btn, msg: 'text-xs', ex: 'px-3 py-1 text-xs' };
   return (
     <section id="sujets" className="rounded-3xl bg-surface p-5 ring-1 ring-line animate-rise">
-      <h2 className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-accent/90">Mes sujets</h2>
-      <p className="mb-4 text-xs leading-relaxed text-muted">
-        Tapez ce qui vous intéresse : un produit, une marque, un thème. L'application cherche ensuite chaque jour en français, en anglais et en chinois.
+      <h2 className={`${sz.title} font-semibold uppercase tracking-[0.2em] text-accent/90`}>{simple ? 'Mes sujets suivis' : 'Mes sujets'}</h2>
+      <p className={`${sz.help} leading-relaxed text-muted`}>
+        {simple
+          ? 'Écrivez un sujet (un téléphone, une voiture, un jeu…) puis touchez « Ajouter ».'
+          : 'Tapez ce qui vous intéresse : un produit, une marque, un thème. L\'application cherche ensuite chaque jour en français, en anglais et en chinois.'}
       </p>
-      <form onSubmit={e => { e.preventDefault(); add(); }} className="flex gap-2">
-        <input className={input} value={text} onChange={e => setText(e.target.value)} placeholder="ex. voitures BYD" id="new-topic"
+      <form onSubmit={e => { e.preventDefault(); add(); }} className={simple ? 'space-y-3' : 'flex gap-2'}>
+        <input className={sz.input} value={text} onChange={e => setText(e.target.value)} placeholder="ex. voitures BYD" id="new-topic"
           disabled={busy || full} autoFocus={autoFocus} enterKeyHint="done" />
-        <button type="submit" disabled={busy || full || text.trim().length < 2} className={`${btn} shrink-0 bg-ink text-bg`}>{busy ? '…' : 'Ajouter'}</button>
+        <button type="submit" disabled={busy || full || text.trim().length < 2}
+          className={`${sz.btn} shrink-0 bg-ink text-bg transition disabled:opacity-50 ${simple ? 'w-full' : ''}`}>{busy ? '…' : 'Ajouter'}</button>
       </form>
       {!data?.topics?.length || data.topics.length < 2 ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {EXAMPLES.map(x => (
-            <button key={x} onClick={() => setText(x)} className="rounded-full bg-surface-2 px-3 py-1 text-xs text-muted ring-1 ring-line">{x}</button>
+            <button key={x} onClick={() => setText(x)} className={`rounded-full bg-surface-2 text-muted ring-1 ring-line ${sz.ex}`}>{x}</button>
           ))}
         </div>
       ) : null}
-      {full && <p className="mt-2 text-xs text-muted">Maximum atteint ({data.max} sujets) : supprimez-en un pour en ajouter un autre.</p>}
-      {msg && <p className="mt-3 text-xs text-muted" role="status">{msg}</p>}
+      {full && <p className={`mt-2 text-muted ${sz.msg}`}>Maximum atteint ({data.max} sujets) : supprimez-en un pour en ajouter un autre.</p>}
+      {msg && <p className={`mt-3 text-muted ${sz.msg}`} role="status">{msg}</p>}
       <ul className="mt-4 divide-y divide-line">
-        {data?.topics.map(t => <TopicRow key={t.id} t={t} onChanged={() => { load(); onAdded?.(); }} />)}
+        {data?.topics.map(t => simple
+          ? <SimpleTopicRow key={t.id} t={t} onChanged={() => { load(); onAdded?.(); }} />
+          : <TopicRow key={t.id} t={t} onChanged={() => { load(); onAdded?.(); }} />)}
       </ul>
     </section>
   );

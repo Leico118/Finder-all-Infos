@@ -49,6 +49,7 @@ export function getEngine() {
       fetch: nativeFetch,
       notify: async n => b.notify(n.title, n.body, n.route || ''),
       info: async () => JSON.parse(b.info()),
+      setDailyHour: async h => b.setDailyHour && b.setDailyHour(h),
     });
   }
   return engine;

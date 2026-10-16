@@ -127,6 +127,12 @@ public final class RadarBridge {
                 "window.__radarUpdate && window.__radarUpdate(" + JSONObject.quote(state) + "," + JSONObject.quote(detail) + ")", null))));
     }
 
+    /** Heure de la collecte quotidienne (0 à 23) : reprogramme la tâche de fond. */
+    @JavascriptInterface
+    public void setDailyHour(int hour) {
+        if (hour >= 0 && hour <= 23) RadarApp.setDailyHour(ctx, hour);
+    }
+
     @JavascriptInterface
     public void done(String json) {
         if (done != null) done.onDone(json);

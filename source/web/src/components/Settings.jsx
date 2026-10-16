@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { device, isNative } from '../native.js';
 import RefreshProgress from './RefreshProgress.jsx';
+import HourPicker, { hourLabel } from './HourPicker.jsx';
 import { RELIABILITY, ReliabilityBadge, CompetitorBadge } from './Badge.jsx';
 import { IconChevron } from './Icons.jsx';
 import { formatDateTime, timeAgo } from '../util.js';
 import Topics from './Topics.jsx';
+import { BigButton } from './Simple.jsx';
 
 const input = 'w-full rounded-2xl bg-surface-2 px-4 py-3 text-sm text-ink ring-1 ring-line outline-none focus:ring-accent/60';
 const Btn = ({ children, className = '', ...p }) => (
@@ -66,7 +68,7 @@ function Switch({ on, onClick, label }) {
 }
 
 // Version installée et mise à jour depuis GitHub, sans passer par le navigateur.
-function AppUpdate({ version }) {
+function AppUpdate({ version, simple = false }) {
   const [info, setInfo] = useState(null);
   const [checking, setChecking] = useState(false);
   const [msg, setMsg] = useState('');
@@ -87,6 +89,7 @@ function AppUpdate({ version }) {
     if (!started) { device.openUrl(info.url); setBusy(false); setMsg(''); }
   };
   const available = info?.available;
+  if (simple && !available) return null;                     // mode simplifié : seulement s'il y a une mise à jour
   return (
     <Block title="Application" highlight={available}>
       <div className="flex items-center justify-between gap-3">
@@ -106,7 +109,24 @@ function AppUpdate({ version }) {
   );
 }
 
-export default function Settings({ onRefresh, refreshing, refreshMsg, progress, onTopicsChanged, focusTopics }) {
+// Interrupteur du mode simplifié (affiché en bas des réglages, dans les deux modes).
+function ModeBlock({ simple, onModeChange }) {
+  return (
+    <section className={`rounded-3xl bg-surface ring-1 ring-line animate-rise ${simple ? 'p-6' : 'p-5'}`}>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className={simple ? 'text-[19px] font-medium text-ink' : 'text-sm text-ink'}>Mode simplifié</p>
+          <p className={simple ? 'mt-1 text-[16px] text-muted' : 'text-xs text-muted'}>
+            {simple ? 'Activé : gros caractères, l\'essentiel seulement.' : 'Gros caractères et uniquement l\'essentiel, pour une utilisation sans effort.'}
+          </p>
+        </div>
+        <Switch on={simple} onClick={() => onModeChange(simple ? 'full' : 'simple')} label="Mode simplifié" />
+      </div>
+    </section>
+  );
+}
+
+export default function Settings({ onRefresh, refreshing, refreshMsg, progress, onTopicsChanged, focusTopics, simple = false, onModeChange }) {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
   const [openGroup, setOpenGroup] = useState(null);
@@ -123,6 +143,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
 
   const saveAI = async key => { await api.setup({ ai_provider: 'gemini', ai_key: key }); load(); onTopicsChanged?.(); };
   const saveSearch = async key => { await api.setup({ search_key: key }); load(); };
+  const [picker, setPicker] = useState(false);
   const toggleAuto = async () => { await api.setup({ auto_collect: !status.auto_collect }); load(); };
   const toggleNotify = async () => {
     const on = !status.notify_enabled;
@@ -133,6 +154,51 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
 
   const s = status?.last_summary;
   const needsSetup = status && !status.ai.configured;
+
+  if (simple) {
+    return (
+      <div className="pt-safe pb-safe px-4 animate-fade">
+        <header className="mb-5">
+          <h1 className="text-[30px] font-semibold text-ink">Réglages</h1>
+        </header>
+        {error && <div className="mb-4 rounded-3xl bg-surface p-5 text-[16px] text-red-300 ring-1 ring-red-400/20">{error}</div>}
+        <div className="space-y-4">
+          {isNative() && <AppUpdate version={dev?.version} simple />}
+
+          {needsSetup && (
+            <Block title="À faire une seule fois" highlight>
+              <p className="mb-3 text-[16px] leading-relaxed text-ink/90">Demandez à la personne qui vous a installé Radar de coller ici la clé « Gemini ».</p>
+              <KeyForm label="Google Gemini" placeholder="AIza…" id="gemini-key" configured={false} onSave={saveAI} />
+            </Block>
+          )}
+
+          <section className="rounded-3xl bg-surface p-6 ring-1 ring-line animate-rise">
+            <p className="text-[18px] text-ink">Dernière recherche : {timeAgo(status?.last_sync)}</p>
+            <BigButton onClick={onRefresh} disabled={refreshing} className="mt-4 bg-ink text-bg">{refreshing ? 'Recherche en cours…' : 'Chercher les nouvelles'}</BigButton>
+            {refreshing && progress ? <div className="mt-4"><RefreshProgress progress={progress} compact /></div>
+              : refreshMsg && <p className="mt-3 text-[16px] text-muted">{refreshMsg}</p>}
+          </section>
+
+          <Topics simple onAdded={() => { load(); onTopicsChanged?.(); }} autoFocus={focusTopics} />
+
+          {status && (
+            <section className="rounded-3xl bg-surface p-6 ring-1 ring-line animate-rise">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[19px] font-medium text-ink">Alertes sur le téléphone</p>
+                  <p className="mt-1 text-[16px] text-muted">Prévenir quand une nouvelle importante arrive.</p>
+                </div>
+                <Switch on={status.notify_enabled && (!dev || dev.notifications)} onClick={toggleNotify} label="Alertes sur le téléphone" />
+              </div>
+            </section>
+          )}
+
+          <ModeBlock simple onModeChange={onModeChange} />
+          {dev?.version && <p className="px-2 pb-2 text-center text-[14px] text-faint">Radar {dev.version}</p>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pt-safe pb-safe px-4 animate-fade">
@@ -200,12 +266,22 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
           </p>
           {status && (
             <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4">
-              <div>
-                <p className="text-sm text-ink">Collecte automatique à 8 h</p>
-                <p className="text-xs text-muted">{status.auto_collect ? 'Chaque matin, même application fermée.' : 'Désactivée : rien ne se fait sans « Actualiser ».'}</p>
+              <div className="min-w-0">
+                <p className="text-sm text-ink">Collecte automatique</p>
+                <p className="text-xs text-muted">{status.auto_collect ? 'Chaque jour, même application fermée.' : 'Désactivée : rien ne se fait sans « Actualiser ».'}</p>
               </div>
-              <Switch on={status.auto_collect} onClick={toggleAuto} label="Collecte automatique à 8 h" />
+              <div className="flex shrink-0 items-center gap-2.5">
+                <button onClick={() => setPicker(true)} disabled={!status.auto_collect} aria-label="Changer l'heure de la collecte automatique"
+                  className="rounded-xl bg-surface-2 px-3 py-1.5 text-sm font-semibold tabular-nums text-ink ring-1 ring-accent/30 transition active:scale-95 disabled:opacity-40 disabled:ring-line">
+                  {hourLabel(status.daily_hour ?? 8)}
+                </button>
+                <Switch on={status.auto_collect} onClick={toggleAuto} label="Collecte automatique" />
+              </div>
             </div>
+          )}
+          {picker && status && (
+            <HourPicker value={status.daily_hour ?? 8} onClose={() => setPicker(false)}
+              onPick={async h => { await api.setup({ daily_hour: h }); setPicker(false); load(); }} />
           )}
         </Block>
 
@@ -214,7 +290,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm text-ink">Économie de batterie</p>
-                <p className="text-xs text-muted">{dev.batteryExempt ? 'Désactivée pour Radar : la collecte de 8 h peut se faire application fermée.' : 'Active : Android risque de bloquer la collecte de 8 h quand l\'application est fermée.'}</p>
+                <p className="text-xs text-muted">{dev.batteryExempt ? 'Désactivée pour Radar : la collecte automatique peut se faire application fermée.' : 'Active : Android risque de bloquer la collecte automatique quand l\'application est fermée.'}</p>
               </div>
               {dev.batteryExempt ? <span className="text-xs text-emerald-300">✔ OK</span>
                 : <Btn onClick={() => device.requestBattery()} className="shrink-0 bg-ink text-bg">Autoriser</Btn>}
@@ -291,6 +367,8 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
             </li>
           </ul>
         </Block>
+
+        {onModeChange && <ModeBlock simple={false} onModeChange={onModeChange} />}
 
         {status?.legacy?.cards > 0 && (
           <p className="px-2 text-center text-[11px] text-faint">{status.legacy.cards} actualité{status.legacy.cards > 1 ? 's' : ''} reprise{status.legacy.cards > 1 ? 's' : ''} de l'application web Find X10 Ultra.</p>
