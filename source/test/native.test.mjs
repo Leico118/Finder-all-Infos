@@ -147,6 +147,12 @@ assert(!(await api.status()).ai.configured, 'clés effacées (nouveau téléphon
 const imp = await api.importCode(`Code pour configurer Radar :\n${sc.code}\n\nCopie ce message…`);
 const stI = await api.status();
 assert(imp.ai_ok && imp.search_ok && imp.backup_ok && stI.ai.configured && stI.search.configured && stI.ai.backup, 'code importé depuis un message : les trois clés installées');
+assert(stI.keys_received.gemini && !stI.can_share, 'clés reçues marquées comme telles');
+let reshare; try { await api.shareCode(); } catch (e) { reshare = e; }
+assert(reshare?.status === 403, 'clés reçues d\'un proche : impossible de les partager à nouveau');
+await api.setup({ ai_key: 'AIzaMINE-123456' });
+const own = await api.shareCode();
+assert(!own.search && !own.backup && (await api.status()).can_share, 'sa propre clé Gemini se partage, mais pas les clés Tavily/Groq reçues');
 let badCode; try { await api.importCode('bonjour'); } catch (e) { badCode = e; }
 assert(badCode?.status === 400 && /pas un code Radar/.test(badCode.message), 'texte sans code refusé avec un message clair');
 let cut; try { await api.importCode(sc.code.slice(0, 20)); } catch (e) { cut = e; }

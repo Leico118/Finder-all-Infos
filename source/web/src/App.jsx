@@ -5,6 +5,7 @@ import CardDetail from './components/CardDetail.jsx';
 import Specs from './components/Specs.jsx';
 import Settings from './components/Settings.jsx';
 import { SimpleFeed, Welcome, goSimpleHome } from './components/Simple.jsx';
+import KeySetup from './components/KeySetup.jsx';
 import { IconNews, IconSpecs, IconSettings } from './components/Icons.jsx';
 
 const store = {
@@ -17,6 +18,7 @@ function parseHash() {
   const m = h.match(/^\/carte\/([\w-]+)/);
   if (m) return { view: 'card', id: m[1] };
   if (h.startsWith('/fiche')) return { view: 'specs' };
+  if (h.startsWith('/cles')) return { view: 'keys', step: h.split('/')[2] || '' };
   if (h.startsWith('/reglages')) return { view: 'settings', topics: h.includes('sujets') };
   return { view: 'feed' };
 }
@@ -209,7 +211,7 @@ export default function App() {
   const currentTopic = topics.find(t => t.id === topic);
 
   if (mode === 'welcome') {
-    return <div className="mx-auto min-h-screen max-w-xl"><Welcome onChoose={m => { changeMode(m); window.location.hash = '#/reglages'; }} /></div>;
+    return <div className="mx-auto min-h-screen max-w-xl"><Welcome onChoose={m => { changeMode(m); window.location.hash = '#/cles'; }} /></div>;
   }
 
   return (
@@ -224,6 +226,9 @@ export default function App() {
           onRefresh={() => refresh()} onOpen={id => go(`#/carte/${id}`)}
           onReadAll={readAll} />
       )}
+      {route.view === 'keys' && (
+        <KeySetup startAt={route.step} onFinish={() => { loadTopics(); load(); window.location.hash = '#/'; }} />
+      )}
       {route.view === 'card' && <CardDetail id={route.id} onBack={back} onRead={() => load()} simple={simple} />}
       {route.view === 'specs' && !simple && <Specs onOpenCard={id => go(`#/carte/${id}`)} topic={currentTopic?.type === 'product' ? topic : ''} />}
       {route.view === 'settings' && (
@@ -231,7 +236,7 @@ export default function App() {
           onTopicsChanged={() => { loadTopics(); load(); }} focusTopics={route.topics} simple={simple} onModeChange={changeMode} />
       )}
 
-      <nav className="app-nav nav-safe fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/85 backdrop-blur-xl">
+      {route.view !== 'keys' && <nav className="app-nav nav-safe fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/85 backdrop-blur-xl">
         <ul className="mx-auto flex max-w-xl justify-around px-2 pt-2">
           {tabs.map(({ id, hash, label, Icon, badge }) => {
             const active = activeTab === id;
@@ -253,7 +258,7 @@ export default function App() {
             );
           })}
         </ul>
-      </nav>
+      </nav>}
     </div>
   );
 }

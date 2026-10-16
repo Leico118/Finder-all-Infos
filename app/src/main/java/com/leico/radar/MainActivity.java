@@ -65,6 +65,14 @@ public class MainActivity extends Activity {
         if (web != null) web.onResume();
     }
 
+    // Retour dans Radar (par exemple après avoir copié une clé sur le site de Google) : la page vérifie
+    // le presse-papiers, ce qui n'est possible qu'une fois la fenêtre au premier plan.
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && web != null) web.evaluateJavascript("window.__radarFocus && window.__radarFocus()", null);
+    }
+
     @Override
     protected void onPause() {
         if (web != null) web.onPause();

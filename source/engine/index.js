@@ -39,6 +39,7 @@ export function createEngine(platform) {
       ANTHROPIC_API_KEY: c.anthropic_key || '',
       TAVILY_API_KEY: c.tavily_key || '',
       GROQ_API_KEY: c.groq_key || '',
+      SHARED: { gemini: c.shared_gemini === '1', tavily: c.shared_tavily === '1', groq: c.shared_groq === '1' },   // clés reçues d'un proche
       AUTO_COLLECT: c.auto_collect !== '0',
       UI_MODE: c.ui_mode === 'simple' || c.ui_mode === 'full' ? c.ui_mode : '',
       DAILY_HOUR: /^\d+$/.test(c.daily_hour || '') && Number(c.daily_hour) < 24 ? Number(c.daily_hour) : base.DAILY_HOUR,
@@ -177,6 +178,8 @@ export function createEngine(platform) {
       legacy: parse(await getMeta(E, 'legacy_import')),
       pending,
       ai: { configured: aiConfigured(E), provider: E.AI_PROVIDER, backup: backupConfigured(E) },
+      keys_received: E.SHARED,
+      can_share: aiConfigured(E) && !E.SHARED.gemini,
       search: { configured: searchConfigured(E) },
       notify_enabled: (await getMeta(E, 'notify_enabled')) !== '0',
       auto_collect: E.AUTO_COLLECT,
@@ -284,6 +287,7 @@ export function createEngine(platform) {
       try { await tavily({ TAVILY_API_KEY: skey }, { query: 'actualités', max_results: 1 }); }
       catch (e) { return fail(`Clé Tavily refusée : ${e.message.slice(0, 160)}`); }
       await setCfg('tavily_key', skey);
+      await setCfg('shared_tavily', '0');
       result.search_ok = true;
     }
     const bkey = String(body?.backup_key || '').trim();
@@ -293,6 +297,7 @@ export function createEngine(platform) {
         if (!out || out.ok !== true) throw new Error('réponse inattendue');
       } catch (e) { return fail(`Clé Groq refusée : ${e.message.slice(0, 200)}`); }
       await setCfg('groq_key', bkey);
+      await setCfg('shared_groq', '0');
       result.backup_ok = true;
     }
     const key = String(body?.ai_key || '').trim();
@@ -305,6 +310,7 @@ export function createEngine(platform) {
       } catch (e) { return fail(`Clé refusée par ${p === 'anthropic' ? 'Anthropic' : 'Google'} : ${e.message.slice(0, 200)}`); }
       await setCfg(p === 'anthropic' ? 'anthropic_key' : 'gemini_key', key);
       await setCfg('ai_provider', p);
+      if (p === 'gemini') await setCfg('shared_gemini', '0');
       result.ai_ok = true;
       // L'ancien message « Aucune clé IA » ne doit pas rester affiché une fois la clé enregistrée.
       const last = (await getMeta(E, 'last_error')) || '';
@@ -329,8 +335,12 @@ export function createEngine(platform) {
   const unb64 = s => decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))));
   async function shareCode(E) {
     if (!aiConfigured(E) || E.AI_PROVIDER !== 'gemini') return fail('Ajoutez d\'abord votre clé Gemini.');
-    const code = `RADAR1:${b64(JSON.stringify({ g: E.GEMINI_API_KEY, ...(E.TAVILY_API_KEY ? { t: E.TAVILY_API_KEY } : {}), ...(E.GROQ_API_KEY ? { q: E.GROQ_API_KEY } : {}) }))}`;
-    return ok({ code, search: !!E.TAVILY_API_KEY, backup: !!E.GROQ_API_KEY });
+    // Une clé reçue d'un proche ne peut pas être transmise à nouveau : seul son propriétaire la partage.
+    if (E.SHARED.gemini) return fail('Les clés de ce téléphone ont été reçues d\'un proche : elles ne peuvent pas être partagées à nouveau.', 403);
+    const own = { g: E.GEMINI_API_KEY };
+    if (E.TAVILY_API_KEY && !E.SHARED.tavily) own.t = E.TAVILY_API_KEY;
+    if (E.GROQ_API_KEY && !E.SHARED.groq) own.q = E.GROQ_API_KEY;
+    return ok({ code: `RADAR1:${b64(JSON.stringify(own))}`, search: !!own.t, backup: !!own.q });
   }
   async function importCode(E, body) {
     const m = String(body?.code || '').match(/RADAR1:([A-Za-z0-9_-]{10,})/);
@@ -340,10 +350,11 @@ export function createEngine(platform) {
     if (!data?.g) return fail('Code Radar incomplet : recopiez-le en entier.');
     const r = await setup(E, { ai_provider: 'gemini', ai_key: data.g });             // clé Gemini vérifiée
     if (r.status >= 400) return r;
+    await setCfg('shared_gemini', '1');
     let search_ok = false;
-    if (data.t) { const r2 = await setup(E, { search_key: data.t }); search_ok = r2.status < 400; }   // Tavily : facultatif
+    if (data.t) { const r2 = await setup(E, { search_key: data.t }); search_ok = r2.status < 400; if (search_ok) await setCfg('shared_tavily', '1'); }
     let backup_ok = false;
-    if (data.q) { const r3 = await setup(E, { backup_key: data.q }); backup_ok = r3.status < 400; }   // Groq : facultatif
+    if (data.q) { const r3 = await setup(E, { backup_key: data.q }); backup_ok = r3.status < 400; if (backup_ok) await setCfg('shared_groq', '1'); }
     return ok({ ok: true, ai_ok: true, search_ok, backup_ok });
   }
 

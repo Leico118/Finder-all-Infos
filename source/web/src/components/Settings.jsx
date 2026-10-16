@@ -10,6 +10,7 @@ import Topics from './Topics.jsx';
 import { BigButton } from './Simple.jsx';
 import { ShareKeys, ReceiveKeys } from './KeyTransfer.jsx';
 import ThemePicker from './ThemePicker.jsx';
+import { KEY_STEPS } from './KeySetup.jsx';
 
 const input = 'w-full rounded-2xl bg-surface-2 px-4 py-3 text-sm text-ink ring-1 ring-line outline-none focus:ring-accent/60';
 const Btn = ({ children, className = '', ...p }) => (
@@ -70,7 +71,7 @@ function Switch({ on, onClick, label }) {
 }
 
 // Version installée et mise à jour depuis GitHub, sans passer par le navigateur.
-function AppUpdate({ version, simple = false }) {
+function AppUpdate({ version, simple = false, onlyIfAvailable = false }) {
   const [info, setInfo] = useState(null);
   const [checking, setChecking] = useState(false);
   const [msg, setMsg] = useState('');
@@ -91,7 +92,7 @@ function AppUpdate({ version, simple = false }) {
     if (!started) { device.openUrl(info.url); setBusy(false); setMsg(''); }
   };
   const available = info?.available;
-  if (simple && !available) return null;                     // mode simplifié : seulement s'il y a une mise à jour
+  if ((simple || onlyIfAvailable) && !available) return null;   // en haut / mode simplifié : seulement s'il y a une mise à jour
   return (
     <Block title="Application" highlight={available}>
       <div className="flex items-center justify-between gap-3">
@@ -128,6 +129,44 @@ function ModeBlock({ simple, onModeChange }) {
   );
 }
 
+// Clés IA : état de chaque service et accès à l'assistant de configuration.
+function KeysBlock({ status }) {
+  return (
+    <Block title="Clés IA">
+      <ul className="divide-y divide-line">
+        {KEY_STEPS.map(k => {
+          const on = k.done(status);
+          const received = on && status.keys_received?.[k.id];
+          return (
+            <li key={k.id} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-ink">{k.name} <span className="text-xs font-normal text-faint">· {k.need.toLowerCase()}</span></span>
+                <span className={`block text-xs ${on ? 'text-emerald-300' : k.need === 'Indispensable' ? 'text-red-300' : 'text-muted'}`}>
+                  {on ? (received ? '✔ Active (reçue d\'un proche)' : '✔ Active') : 'Non configurée'}
+                </span>
+              </span>
+              <a href={`#/cles/${k.id}`} className={`shrink-0 rounded-2xl px-4 py-2 text-sm font-medium ${on ? 'bg-surface-2 text-ink ring-1 ring-line' : 'bg-ink text-bg'}`}>
+                {on ? 'Modifier' : 'Configurer'}
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </Block>
+  );
+}
+
+// Radar pas encore prêt : un seul gros bouton vers l'assistant.
+function SetupBanner({ simple }) {
+  return (
+    <section className={`rounded-3xl bg-accent/10 ring-1 ring-accent/40 animate-rise ${simple ? 'p-6' : 'p-5'}`}>
+      <p className={`font-semibold text-ink ${simple ? 'text-[21px]' : 'text-base'}`}>Radar n'est pas encore configuré</p>
+      <p className={`mt-1 text-muted ${simple ? 'text-[17px]' : 'text-sm'}`}>Quelques minutes, une seule fois : l'assistant vous guide pas à pas.</p>
+      <a href="#/cles" className={`mt-4 block w-full rounded-2xl bg-accent text-center font-semibold text-bg ${simple ? 'py-4 text-[18px]' : 'py-3 text-[15px]'}`}>Configurer Radar</a>
+    </section>
+  );
+}
+
 export default function Settings({ onRefresh, refreshing, refreshMsg, progress, onTopicsChanged, focusTopics, simple = false, onModeChange }) {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
@@ -143,17 +182,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
   }, []);
   useEffect(() => { if (focusTopics) document.getElementById('sujets')?.scrollIntoView({ block: 'start' }); }, [focusTopics]);
 
-  const saveAI = async key => { await api.setup({ ai_provider: 'gemini', ai_key: key }); load(); onTopicsChanged?.(); };
-  const saveSearch = async key => { await api.setup({ search_key: key }); load(); };
-  const saveBackup = async key => { await api.setup({ backup_key: key }); load(); };
   const [picker, setPicker] = useState(false);
-  const [ready, setReady] = useState(false);                // clés reçues d'un proche
-  const received = () => { setReady(true); load(); onTopicsChanged?.(); };
-  const readyBanner = ready && (
-    <div className={`rounded-3xl bg-emerald-500/10 text-emerald-200 ring-1 ring-emerald-400/25 animate-rise ${simple ? 'p-5 text-[18px]' : 'p-4 text-sm'}`} role="status">
-      ✔ Radar est prêt. {simple ? 'Touchez « Chercher les nouvelles ».' : 'Vous pouvez lancer une actualisation.'}
-    </div>
-  );
   const toggleAuto = async () => { await api.setup({ auto_collect: !status.auto_collect }); load(); };
   const toggleNotify = async () => {
     const on = !status.notify_enabled;
@@ -161,10 +190,12 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
     await api.setup({ notify: on });
     load();
   };
+  const notifyOn = status && status.notify_enabled && (!dev || dev.notifications);
 
   const s = status?.last_summary;
   const needsSetup = status && !status.ai.configured;
 
+  // ======================= Mode simplifié =======================
   if (simple) {
     return (
       <div className="pt-safe pb-safe px-4 animate-fade">
@@ -173,27 +204,19 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
         </header>
         {error && <div className="mb-4 rounded-3xl bg-surface p-5 text-[16px] text-red-300 ring-1 ring-red-400/20">{error}</div>}
         <div className="space-y-4">
-          {readyBanner}
-          {isNative() && <AppUpdate version={dev?.version} simple />}
-
-          {needsSetup && (
-            <Block title="À faire une seule fois" highlight>
-              <ReceiveKeys simple onDone={received} />
-              <details className="mt-4">
-                <summary className="cursor-pointer text-[15px] text-faint">J'ai ma propre clé Gemini</summary>
-                <div className="mt-3"><KeyForm label="Google Gemini" placeholder="AIza…" id="gemini-key" configured={false} onSave={saveAI} /></div>
-              </details>
-            </Block>
-          )}
+          {needsSetup && <SetupBanner simple />}
 
           <section className="rounded-3xl bg-surface p-6 ring-1 ring-line animate-rise">
             <p className="text-[18px] text-ink">Dernière recherche : {timeAgo(status?.last_sync)}</p>
-            <BigButton onClick={onRefresh} disabled={refreshing} className="mt-4 bg-ink text-bg">{refreshing ? 'Recherche en cours…' : 'Chercher les nouvelles'}</BigButton>
+            <BigButton onClick={onRefresh} disabled={refreshing || needsSetup} className="mt-4 bg-ink text-bg">{refreshing ? 'Recherche en cours…' : 'Chercher les nouvelles'}</BigButton>
             {refreshing && progress ? <div className="mt-4"><RefreshProgress progress={progress} compact /></div>
               : refreshMsg && <p className="mt-3 text-[16px] text-muted">{refreshMsg}</p>}
           </section>
 
           <Topics simple onAdded={() => { load(); onTopicsChanged?.(); }} autoFocus={focusTopics} />
+
+          <ThemePicker simple />
+          <ModeBlock simple onModeChange={onModeChange} />
 
           {status && (
             <section className="rounded-3xl bg-surface p-6 ring-1 ring-line animate-rise">
@@ -202,18 +225,19 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
                   <p className="text-[19px] font-medium text-ink">Alertes sur le téléphone</p>
                   <p className="mt-1 text-[16px] text-muted">Prévenir quand une nouvelle importante arrive.</p>
                 </div>
-                <Switch on={status.notify_enabled && (!dev || dev.notifications)} onClick={toggleNotify} label="Alertes sur le téléphone" />
+                <Switch on={notifyOn} onClick={toggleNotify} label="Alertes sur le téléphone" />
               </div>
             </section>
           )}
 
-          <ThemePicker simple />
-          <ModeBlock simple onModeChange={onModeChange} />
+          {isNative() && <AppUpdate version={dev?.version} simple />}
         </div>
       </div>
     );
   }
 
+  // ======================= Mode complet =======================
+  // Ordre : l'usage de tous les jours d'abord (actualiser, sujets, apparence), le technique ensuite, la version tout en bas.
   return (
     <div className="pt-safe pb-safe px-4 animate-fade">
       <header className="mb-5">
@@ -224,70 +248,22 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
       {error && <div className="mb-3 rounded-3xl bg-surface p-5 text-sm text-red-300 ring-1 ring-red-400/20">{error}</div>}
 
       <div className="space-y-3">
-        {readyBanner}
-        {isNative() && <AppUpdate version={dev?.version} />}
+        {needsSetup && <SetupBanner />}
+        {isNative() && <AppUpdate version={dev?.version} onlyIfAvailable />}
 
-        {status && (
-          <Block title="Intelligence artificielle" highlight={needsSetup}>
-            {needsSetup && (
-              <div className="mb-4 border-b border-line pb-4">
-                <ReceiveKeys onDone={received} />
-                <p className="mt-3 text-xs text-faint">Ou créez votre propre clé :</p>
-              </div>
-            )}
-            <KeyForm label="Google Gemini" placeholder="AIza…" id="gemini-key" configured={status.ai.configured} onSave={saveAI}>
-              <p className="text-xs leading-relaxed text-muted">Indispensable : traduit, classe et regroupe les articles. Gratuit.</p>
-              <ol className="list-decimal space-y-0.5 pl-4 text-xs leading-relaxed text-muted">
-                <li>Ouvrez <Link href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</Link> et connectez-vous avec Google.</li>
-                <li>Touchez « Create API key », puis copiez la clé (elle commence par « AIza »).</li>
-                <li>Collez-la ici.</li>
-              </ol>
-            </KeyForm>
-          </Block>
-        )}
-
-        {status && (
-          <Block title="Recherche web" highlight={status.ai.configured && !status.search.configured}>
-            <KeyForm label="Tavily" placeholder="tvly-…" id="tavily-key" configured={status.search.configured} onSave={saveSearch}>
-              <p className="text-xs leading-relaxed text-muted">Recommandé : retrouve les informations des mois passés et les sites sans flux (Weibo relayé, sites chinois…). Gratuit, 1 000 recherches par mois.</p>
-              <ol className="list-decimal space-y-0.5 pl-4 text-xs leading-relaxed text-muted">
-                <li>Ouvrez <Link href="https://app.tavily.com">app.tavily.com</Link> → « Sign up » (compte Google possible).</li>
-                <li>Copiez la clé « API Key » (elle commence par « tvly- ») et collez-la ici.</li>
-              </ol>
-            </KeyForm>
-          </Block>
-        )}
-
-        {status && (
-          <Block title="IA de secours (facultatif)">
-            <KeyForm label="Groq" placeholder="gsk_…" id="groq-key" configured={status.ai.backup} onSave={saveBackup}>
-              <p className="text-xs leading-relaxed text-muted">
-                Prend le relais quand les serveurs de Google sont surchargés : les articles sont analysés quand même au lieu d'attendre. Gratuit.
-              </p>
-              <ol className="list-decimal space-y-0.5 pl-4 text-xs leading-relaxed text-muted">
-                <li>Ouvrez <Link href="https://console.groq.com/keys">console.groq.com/keys</Link> et connectez-vous (compte Google possible).</li>
-                <li>Touchez « Create API Key », donnez-lui un nom (ex. Radar), puis copiez la clé (elle commence par « gsk_ »).</li>
-                <li>Collez-la ici.</li>
-              </ol>
-            </KeyForm>
-          </Block>
-        )}
-
-        {isNative() && status?.ai.configured && <ShareKeys />}
-
-        <Topics onAdded={() => { load(); onTopicsChanged?.(); }} autoFocus={focusTopics} />
-
-        <Block title="Synchronisation">
-          <p className="text-sm text-ink">Dernière synchronisation : {timeAgo(status?.last_sync)}</p>
-          {status && <p className="mt-0.5 text-xs text-muted">{status.auto_collect ? `Prochaine collecte automatique : ${formatDateTime(status.next_collect)}` : 'Collecte automatique désactivée'}</p>}
+        <Block title="Actualiser">
+          <Btn onClick={onRefresh} disabled={refreshing || needsSetup} className="w-full bg-ink py-3 text-[15px] text-bg">{refreshing ? 'Synchronisation en cours…' : 'Actualiser maintenant'}</Btn>
+          {refreshing && progress ? <div className="mt-3"><RefreshProgress progress={progress} compact /></div>
+            : refreshMsg && <p className="mt-2 text-xs text-muted">{refreshMsg}</p>}
+          <p className="mt-3 text-sm text-ink">Dernière synchronisation : {timeAgo(status?.last_sync)}</p>
           {s && (
-            <p className="mt-3 text-xs leading-relaxed text-muted">
+            <p className="mt-1 text-xs leading-relaxed text-muted">
               Dernier passage ({s.mode === 'background' ? 'automatique' : 'manuel'}) :
-              {' '}{s.topics} sujet{s.topics > 1 ? 's' : ''} collecté{s.topics > 1 ? 's' : ''}, {s.newItems} nouvel{s.newItems > 1 ? 's' : ''} article{s.newItems > 1 ? 's' : ''},
-              {' '}{s.analyzed} analysé{s.analyzed > 1 ? 's' : ''}{s.backup ? ` (dont ${s.backup} par l'IA de secours)` : ''}, {s.created} carte{s.created > 1 ? 's' : ''} créée{s.created > 1 ? 's' : ''}.
+              {' '}{s.newItems} nouvel{s.newItems > 1 ? 's' : ''} article{s.newItems > 1 ? 's' : ''},
+              {' '}{s.analyzed} analysé{s.analyzed > 1 ? 's' : ''}{s.backup ? ` (dont ${s.backup} par l'IA de secours)` : ''}, {s.created} carte{s.created > 1 ? 's' : ''} créée{s.created > 1 ? 's' : ''}
+              {status?.pending ? ` · ${status.pending} en attente d'analyse` : ''}.
             </p>
           )}
-          {status && <p className="mt-1 text-xs text-muted">Articles en attente d'analyse : {status.pending}</p>}
           {status?.last_error && <p className="mt-3 rounded-2xl bg-red-500/10 p-3 text-xs text-red-200 ring-1 ring-red-400/20">{status.last_error}</p>}
           {/connexion Internet|UnknownHost/.test(status?.last_error || '') && (
             <p className="mt-2 text-[11px] leading-relaxed text-muted">
@@ -296,17 +272,11 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
               Pensez aussi à un éventuel VPN, bloqueur de publicités ou « DNS privé ».
             </p>
           )}
-          <Btn onClick={onRefresh} disabled={refreshing} className="mt-4 w-full bg-ink text-bg">{refreshing ? 'Synchronisation en cours…' : 'Actualiser maintenant'}</Btn>
-          {refreshing && progress ? <div className="mt-3"><RefreshProgress progress={progress} compact /></div>
-            : refreshMsg && <p className="mt-2 text-xs text-muted">{refreshMsg}</p>}
-          <p className="mt-3 text-[11px] leading-relaxed text-faint">
-            « Actualiser » interroge toutes les sources de vos sujets puis analyse tous les articles en attente. L'ouverture de l'application ne déclenche rien.
-          </p>
           {status && (
             <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4">
               <div className="min-w-0">
                 <p className="text-sm text-ink">Collecte automatique</p>
-                <p className="text-xs text-muted">{status.auto_collect ? 'Chaque jour, même application fermée.' : 'Désactivée : rien ne se fait sans « Actualiser ».'}</p>
+                <p className="text-xs text-muted">{status.auto_collect ? `Chaque jour · prochaine : ${formatDateTime(status.next_collect)}` : 'Désactivée : rien ne se fait sans « Actualiser ».'}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2.5">
                 <button onClick={() => setPicker(true)} disabled={!status.auto_collect} aria-label="Changer l'heure de la collecte automatique"
@@ -323,6 +293,29 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
           )}
         </Block>
 
+        <Topics onAdded={() => { load(); onTopicsChanged?.(); }} autoFocus={focusTopics} />
+
+        <ThemePicker />
+        {onModeChange && <ModeBlock simple={false} onModeChange={onModeChange} />}
+
+        {status && (
+          <Block title="Notifications">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-ink">Nouveautés importantes</p>
+                <p className="text-xs text-muted">Annonces officielles et informations majeures, une notification par sujet.</p>
+              </div>
+              <Switch on={notifyOn} onClick={toggleNotify} label="Notifications" />
+            </div>
+            {dev && !dev.notifications && status.notify_enabled && (
+              <p className="mt-2 text-xs text-muted">Android bloque encore les notifications de Radar. <button className="text-accent underline" onClick={() => device.requestNotifications()}>Les autoriser</button></p>
+            )}
+          </Block>
+        )}
+
+        {status && <KeysBlock status={status} />}
+        {isNative() && status?.can_share && <ShareKeys />}
+
         {isNative() && dev && (
           <Block title="Fonctionnement en arrière-plan" highlight={!dev.batteryExempt}>
             <div className="flex items-start justify-between gap-3">
@@ -337,24 +330,6 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
               <p className="mt-3 text-[11px] leading-relaxed text-faint">
                 Sur ROG Phone, vérifiez aussi : Paramètres → Applications → Radar → Batterie → « Non restreinte », et dans Mobile Manager, autorisez le démarrage automatique de Radar.
               </p>
-            )}
-          </Block>
-        )}
-
-        {status && (
-          <Block title="Notifications">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-ink">Nouveautés importantes</p>
-                <p className="text-xs text-muted">Annonces officielles et informations majeures, une notification par sujet.</p>
-              </div>
-              <button onClick={toggleNotify} role="switch" aria-checked={status.notify_enabled && (!dev || dev.notifications)}
-                className={`relative h-7 w-12 shrink-0 rounded-full transition ${status.notify_enabled && (!dev || dev.notifications) ? 'bg-accent' : 'bg-surface-2 ring-1 ring-line'}`}>
-                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${status.notify_enabled && (!dev || dev.notifications) ? 'left-6' : 'left-1'}`} />
-              </button>
-            </div>
-            {dev && !dev.notifications && status.notify_enabled && (
-              <p className="mt-2 text-xs text-muted">Android bloque encore les notifications de Radar. <button className="text-accent underline" onClick={() => device.requestNotifications()}>Les autoriser</button></p>
             )}
           </Block>
         )}
@@ -406,13 +381,10 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
           </ul>
         </Block>
 
-        <ThemePicker />
-        {onModeChange && <ModeBlock simple={false} onModeChange={onModeChange} />}
-
+        {isNative() && <AppUpdate version={dev?.version} />}
         {status?.legacy?.cards > 0 && (
           <p className="px-2 text-center text-[11px] text-faint">{status.legacy.cards} actualité{status.legacy.cards > 1 ? 's' : ''} reprise{status.legacy.cards > 1 ? 's' : ''} de l'application web Find X10 Ultra.</p>
         )}
-        {dev?.version && <p className="px-2 pb-2 text-center text-[11px] text-faint">Radar {dev.version}</p>}
       </div>
     </div>
   );
