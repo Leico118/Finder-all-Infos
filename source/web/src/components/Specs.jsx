@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { ReliabilityBadge } from './Badge.jsx';
 import { IconChevron } from './Icons.jsx';
@@ -52,23 +52,50 @@ export default function Specs({ onOpenCard, topic: preferred }) {
   const [busy, setBusy] = useState('');                 // '' | 'build' | 'fill' | 'redo'
   const [msg, setMsg] = useState('');
   const [topic, setTopic] = useState(preferred || '');
+  const [model, setModel] = useState('');               // modèle affiché (fiche technique d'un modèle d'un sujet général)
+  const [pending, setPending] = useState(null);         // modèle touché mais pas encore de fiche
+  const [adding, setAdding] = useState(false);
+  const [newModel, setNewModel] = useState('');
 
-  const load = (id = topic) => api.specs(id).then(d => { setData(d); setError(''); if (d.topic && d.topic.id !== id) setTopic(d.topic.id); return d; })
+  const load = (id = topic, mid = model) => api.specs(id, mid).then(d => { setData(d); setError(''); if (d.topic && d.topic.id !== id) setTopic(d.topic.id); return d; })
     .catch(e => setError(e.message));
-  useEffect(() => { setData(null); setMsg(''); load(topic); }, [topic]);
+  useEffect(() => { setData(null); setMsg(''); setModel(''); setPending(null); load(topic, ''); }, [topic]);
+  const keepMsg = useRef(false);
+  useEffect(() => { if (data) { if (!keepMsg.current) setMsg(''); keepMsg.current = false; load(topic, model); } }, [model]);
 
-  const product = data?.topic?.type === 'product';
+  const product = data?.topic?.type === 'product' || !!data?.model;
   const sheetName = product ? 'Fiche technique' : 'Fiche repères';
   const hasSheet = data?.groups?.length > 0;
+  const models = data?.models || [];
+  const showModels = data?.topic && (models.length > 0 || data.topic.type === 'general');
+
+  async function generateModel(m, regenerate = false) {
+    setBusy('model'); setMsg(`L'IA prépare la fiche technique de ${m.name}, puis la remplit avec les actualités qui en parlent…`);
+    try {
+      const r = await api.buildModelSheet(data.topic.id, m.id, { regenerate });
+      keepMsg.current = true;
+      setPending(null); setModel(m.id);
+      await load(data.topic.id, m.id);
+      setMsg(r.cards ? `✔ ${r.filled} caractéristique${r.filled > 1 ? 's' : ''} trouvée${r.filled > 1 ? 's' : ''} dans ${r.cards > 1 ? `les ${r.cards} actualités` : 'l\'actualité'} sur ce modèle.` : '✔ Fiche prête : elle se remplira au fil des actualités sur ce modèle.');
+    } catch (e) { setMsg(`✖ ${e.message}`); }
+    finally { setBusy(''); }
+  }
+  async function removeModel(m) {
+    await api.removeModel(data.topic.id, m.id).catch(() => {});
+    setPending(null); setModel(''); await load(data.topic.id, '');
+  }
 
   async function run(kind) {
     setBusy(kind);
     setMsg(kind === 'fill' ? 'L\'IA relit les actualités déjà trouvées…' : 'L\'IA prépare la fiche, puis la remplit avec les actualités déjà trouvées…');
     try {
-      const r = await api.buildSheet(data.topic.id, { regenerate: kind === 'redo' });
-      await load(data.topic.id);
+      const r = data.model
+        ? await api.buildModelSheet(data.topic.id, data.model.id, { regenerate: kind === 'redo' })
+        : await api.buildSheet(data.topic.id, { regenerate: kind === 'redo' });
+      await load(data.topic.id, data.model?.id || '');
       const src = r.cards > 1 ? `aux ${r.cards} actualités déjà trouvées` : 'à l\'actualité déjà trouvée';
-      setMsg(r.cards ? (r.filled ? `✔ ${r.filled} ligne${r.filled > 1 ? 's' : ''} complétée${r.filled > 1 ? 's' : ''} grâce ${src}.` : '✔ Fiche prête : les actualités déjà trouvées ne donnaient pas encore de valeur, elle se remplira au fil des nouvelles.')
+      if (r.models) setMsg(`✔ ${r.models} modèle${r.models > 1 ? 's' : ''} repéré${r.models > 1 ? 's' : ''} dans les actualités. `);
+      else setMsg(r.cards ? (r.filled ? `✔ ${r.filled} ligne${r.filled > 1 ? 's' : ''} complétée${r.filled > 1 ? 's' : ''} grâce ${src}.` : '✔ Fiche prête : les actualités déjà trouvées ne donnaient pas encore de valeur, elle se remplira au fil des nouvelles.')
         : '✔ Fiche prête : elle se remplira au fil des actualités.');
     } catch (e) { setMsg(`✖ ${e.message}`); }
     finally { setBusy(''); }
@@ -78,8 +105,8 @@ export default function Specs({ onOpenCard, topic: preferred }) {
     <div className="pt-safe pb-safe px-4 animate-fade">
       <header className="mb-4">
         <p className="text-[11px] font-medium uppercase tracking-[0.32em] text-accent/80">Fiches</p>
-        <h1 className="mt-1 text-[26px] font-semibold leading-tight text-ink">{data?.topic?.name || 'Fiches'}</h1>
-        {data?.topic && <p className="mt-1 text-sm text-muted">{sheetName}{hasSheet ? ` · ${data.known}/${data.total} renseignée${data.known > 1 ? 's' : ''}` : ''}</p>}
+        <h1 className="mt-1 text-[26px] font-semibold leading-tight text-ink">{data?.model?.name || data?.topic?.name || 'Fiches'}</h1>
+        {data?.topic && <p className="mt-1 text-sm text-muted">{sheetName}{data.model ? ` · ${data.topic.name}` : ''}{hasSheet ? ` · ${data.known}/${data.total} renseignée${data.known > 1 ? 's' : ''}` : ''}</p>}
       </header>
 
       {data?.topics?.length > 1 && (
@@ -97,6 +124,53 @@ export default function Specs({ onOpenCard, topic: preferred }) {
         </nav>
       )}
 
+      {/* Modèles repérés dans les actualités : on ne génère la fiche que de ceux qui intéressent */}
+      {showModels && (
+        <section className="mb-4">
+          <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted">Modèles repérés dans les actualités</p>
+          <div className="flex flex-wrap gap-2">
+            {data.topic.type === 'general' && (
+              <button onClick={() => { setPending(null); setModel(''); }}
+                className={`rounded-full px-3.5 py-1.5 text-[13px] font-medium ${!data.model && !pending ? 'bg-ink text-bg' : 'bg-surface text-muted ring-1 ring-line'}`}>Fiche repères</button>
+            )}
+            {models.map(m => {
+              const active = data.model?.id === m.id || pending?.id === m.id;
+              return m.has_sheet
+                ? <button key={m.id} onClick={() => { setPending(null); setModel(m.id); }}
+                    className={`rounded-full px-3.5 py-1.5 text-[13px] font-medium ${active ? 'bg-ink text-bg' : 'bg-surface text-ink ring-1 ring-line'}`}>{m.name}</button>
+                : <button key={m.id} onClick={() => setPending(m)}
+                    className={`rounded-full border border-dashed px-3.5 py-1.5 text-[13px] ${active ? 'border-accent bg-accent/10 text-ink' : 'border-line text-muted'}`}>+ {m.name}</button>;
+            })}
+            {!adding
+              ? <button onClick={() => setAdding(true)} className="rounded-full px-3 py-1.5 text-[13px] text-accent">+ Autre modèle</button>
+              : (
+                <form className="flex w-full gap-2" onSubmit={async e => {
+                  e.preventDefault(); if (newModel.trim().length < 2) return;
+                  await api.addModel(data.topic.id, newModel.trim()).catch(() => {});
+                  setNewModel(''); setAdding(false); await load(data.topic.id, model);
+                }}>
+                  <input autoFocus value={newModel} onChange={e => setNewModel(e.target.value)} placeholder="Nom du modèle (ex. Fairphone 6)"
+                    className="min-w-0 flex-1 rounded-2xl bg-surface-2 px-4 py-2 text-sm text-ink ring-1 ring-line outline-none focus:ring-accent/60" />
+                  <button className="rounded-2xl bg-ink px-4 py-2 text-sm font-medium text-bg">Ajouter</button>
+                </form>
+              )}
+          </div>
+          {!models.length && data.topic.type === 'general' && (
+            <p className="mt-2 px-1 text-xs text-faint">Les modèles cités dans les actualités apparaîtront ici après la prochaine actualisation{hasSheet && data.topic.cards ? ', ou touchez « Compléter » plus bas' : ''}.</p>
+          )}
+          {pending && (
+            <div className="mt-3 rounded-3xl bg-accent/[0.07] p-5 ring-1 ring-accent/30 animate-rise">
+              <p className="text-base font-semibold text-ink">{pending.name}{pending.kind ? <span className="text-sm font-normal text-muted"> · {pending.kind}</span> : null}</p>
+              <p className="mt-1 text-sm text-muted">Générer sa fiche technique ? Elle sera remplie avec les actualités qui parlent de ce modèle, puis tenue à jour à chaque actualisation.</p>
+              <button onClick={() => generateModel(pending)} disabled={!!busy} className="mt-3 w-full rounded-2xl bg-ink px-4 py-3 text-[15px] font-semibold text-bg disabled:opacity-60">
+                {busy === 'model' ? 'Préparation…' : 'Générer la fiche'}
+              </button>
+              <button onClick={() => removeModel(pending)} className="mt-2 w-full py-1.5 text-xs text-muted underline underline-offset-4">Ne m'intéresse pas : retirer ce modèle</button>
+            </div>
+          )}
+        </section>
+      )}
+
       {error && <div className="rounded-3xl bg-surface p-5 text-sm text-red-300 ring-1 ring-red-400/20">{error}</div>}
       {!data && !error && <div className="space-y-3">{[0, 1, 2].map(i => <div key={i} className="h-40 animate-pulse rounded-3xl bg-surface" />)}</div>}
 
@@ -108,7 +182,7 @@ export default function Specs({ onOpenCard, topic: preferred }) {
       )}
 
       {/* Sujet sans fiche : on la crée (et on la remplit avec ce qui est déjà connu) */}
-      {data?.topic && !hasSheet && (
+      {data?.topic && !hasSheet && !pending && (
         <section className="rounded-3xl bg-accent/[0.07] p-6 ring-1 ring-accent/30 animate-rise">
           <p className="text-base font-semibold text-ink">Pas encore de fiche pour ce sujet</p>
           <p className="mt-2 text-sm leading-relaxed text-muted">
@@ -146,12 +220,15 @@ export default function Specs({ onOpenCard, topic: preferred }) {
           {data.topic.cards > 0 && (
             <button onClick={() => run('fill')} disabled={!!busy}
               className="w-full rounded-2xl bg-surface px-4 py-3 text-sm font-medium text-ink ring-1 ring-line disabled:opacity-60">
-              {busy === 'fill' ? 'Lecture des actualités…' : data.topic.cards > 1 ? `Compléter avec les ${data.topic.cards} actualités déjà trouvées` : 'Compléter avec l\'actualité déjà trouvée'}
+              {busy === 'fill' ? 'Lecture des actualités…' : data.model ? 'Mettre à jour avec les actualités sur ce modèle' : data.topic.cards > 1 ? `Compléter avec les ${data.topic.cards} actualités déjà trouvées` : 'Compléter avec l\'actualité déjà trouvée'}
             </button>
           )}
           <button onClick={() => run('redo')} disabled={!!busy} className="w-full py-2 text-xs text-muted underline underline-offset-4 disabled:opacity-60">
             {busy === 'redo' ? 'Préparation…' : 'Les rubriques ne conviennent pas ? Refaire la fiche'}
           </button>
+          {data.model && (
+            <button onClick={() => removeModel(data.model)} className="w-full py-1 text-xs text-faint underline underline-offset-4">Retirer ce modèle de la fiche</button>
+          )}
           <p className="px-2 pt-2 text-center text-[11px] leading-relaxed text-faint">
             La fiche se met à jour toute seule à chaque actualisation. Une valeur n'est remplacée que par une information de fiabilité égale ou supérieure. Touchez une ligne pour voir son historique.
           </p>

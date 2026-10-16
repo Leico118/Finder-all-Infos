@@ -28,14 +28,16 @@ function SimpleTopicRow({ t, onChanged }) {
 
 function TopicRow({ t, onChanged }) {
   const [open, setOpen] = useState(false);
-  const [edit, setEdit] = useState({ name: t.name, short: t.short, match: join(t.match), exclude: join(t.exclude), rivals: join(t.rivals), type: t.type });
+  const [edit, setEdit] = useState({ name: t.name, short: t.short, match: join(t.match), exclude: join(t.exclude), rivals: join(t.rivals), type: t.type, focus: t.focus || '' });
+  const [cleaning, setCleaning] = useState(false);
+  const [savedFocus, setSavedFocus] = useState(t.focus || '');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [confirm, setConfirm] = useState(false);
 
   async function save() {
     setBusy(true); setMsg('');
-    try { await api.updateTopic(t.id, edit); setMsg('✔ Enregistré.'); onChanged(); }
+    try { await api.updateTopic(t.id, edit); setSavedFocus(edit.focus.trim()); setMsg('✔ Enregistré.'); onChanged(); }
     catch (e) { setMsg(`✖ ${e.message}`); }
     finally { setBusy(false); }
   }
@@ -60,6 +62,21 @@ function TopicRow({ t, onChanged }) {
       {open && (
         <div className="mt-3 space-y-3 rounded-2xl bg-surface-2 p-4 animate-rise">
           {t.description && <p className="text-xs leading-relaxed text-muted">{t.description}</p>}
+          <label className="block text-xs text-muted">Ce qui m'intéresse dans ce sujet <span className="text-faint">(facultatif)</span>
+            <textarea rows={2} className={`${input} mt-1 bg-bg`} value={edit.focus} onChange={e => setEdit({ ...edit, focus: e.target.value })} id={`focus-${t.id}`}
+              placeholder="ex. seulement les smartphones, pas les écouteurs ni les accessoires" />
+            <span className="mt-1 block text-[11px] text-faint">L'IA écarte toutes les actualités qui sortent de ce cadre.</span>
+          </label>
+          {savedFocus && (
+            <button disabled={cleaning} onClick={async () => {
+              setCleaning(true); setMsg('L\'IA fait le tri dans les actualités déjà trouvées…');
+              try { const r = await api.cleanTopic(t.id); setMsg(r.removed ? `✔ ${r.removed} actualité${r.removed > 1 ? 's' : ''} hors sujet retirée${r.removed > 1 ? 's' : ''}.` : '✔ Rien à retirer : tout correspond.'); onChanged(); }
+              catch (e) { setMsg(`✖ ${e.message}`); }
+              finally { setCleaning(false); }
+            }} className="w-full rounded-2xl bg-bg px-4 py-2.5 text-xs text-ink ring-1 ring-line disabled:opacity-60">
+              {cleaning ? 'Tri en cours…' : 'Retirer les actualités déjà trouvées qui sortent de ce cadre'}
+            </button>
+          )}
           <label className="block text-xs text-muted">Nom
             <input className={`${input} mt-1 bg-bg`} value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} id={`name-${t.id}`} />
           </label>

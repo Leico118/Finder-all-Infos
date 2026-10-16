@@ -118,6 +118,32 @@ assert(r.status === 200 && (await api('GET', '/api/topics')).data.topics.find(t 
     `fiche repères refaite et remplie (${sh.data?.filled} valeur, clé inventée ignorée)`);
   assert(after.topics.length >= 2 && after.topics.some(t => t.id === 'voitures-byd' && t.has_sheet), 'tous les sujets listés dans Fiches');
 }
+// Modèles repérés dans un sujet général, puis fiche technique d'un seul modèle choisi
+{
+  const sp = (await api('GET', '/api/specs?topic=voitures-byd')).data;
+  assert(sp.models.length === 2 && sp.models.every(m => !m.has_sheet), `modèles repérés dans les actualités, sans doublon (${sp.models.map(m => m.name).join(', ')})`);
+  const seal = sp.models.find(m => m.name === 'BYD Seal');
+  bridge.db.prepare("UPDATE cards SET title = 'BYD Seal : 80 kWh confirmés' WHERE topic_id = 'voitures-byd'").run();
+  const ms = await api('POST', `/api/topics/voitures-byd/models/${seal.id}/sheet`, {});
+  const mv = (await api('GET', `/api/specs?topic=voitures-byd&model=${seal.id}`)).data;
+  const base = (await api('GET', '/api/specs?topic=voitures-byd')).data;
+  assert(ms.status === 200 && mv.model?.id === seal.id && mv.groups.length === 1 && mv.known === 1 && base.model === null && base.models.find(m => m.id === seal.id).has_sheet,
+    'fiche technique générée pour le seul modèle choisi, séparée de la fiche repères');
+  const add = await api('POST', '/api/topics/voitures-byd/models', { name: 'BYD Dolphin' });
+  await api('DELETE', `/api/topics/voitures-byd/models/${seal.id}`);
+  const left = bridge.db.prepare(`SELECT COUNT(*) n FROM specs WHERE topic_id = 'voitures-byd~${seal.id}'`).get().n;
+  assert(add.data.models.length === 3 && left === 0, 'modèle ajouté à la main ; modèle retiré avec sa fiche');
+}
+// « Ce qui m'intéresse » : consigne pour l'IA et tri des actualités déjà trouvées
+{
+  await api('PUT', '/api/topics/voitures-byd', { focus: 'seulement les voitures, pas les écouteurs' });
+  bridge.db.prepare(`INSERT INTO cards (id, topic_id, category, reliability, title, summary, latest_at, first_seen_at, created_at, updated_at) VALUES ('ear1','voitures-byd','target','rumor','Nouveaux écouteurs BYD','s',5,5,5,5)`).run();
+  const cl = await api('POST', '/api/topics/voitures-byd/clean', {});
+  const still = bridge.db.prepare("SELECT COUNT(*) n FROM cards WHERE id = 'ear1'").get().n;
+  const kept = bridge.db.prepare("SELECT COUNT(*) n FROM cards WHERE topic_id = 'voitures-byd'").get().n;
+  const sys = (await import('../engine/ai.js')).analysisSystem({ name: 'Voitures BYD', type: 'general', config: { focus: 'seulement les voitures' } });
+  assert(cl.data.removed === 1 && still === 0 && kept >= 1 && sys.includes('seulement les voitures'), `tri selon ce qui intéresse (${cl.data.removed} retirée, les autres gardées)`);
+}
 r = await api('DELETE', '/api/topics/voitures-byd');
 assert(r.status === 200 && bridge.db.prepare("SELECT COUNT(*) n FROM cards WHERE topic_id = 'voitures-byd'").get().n === 0, 'suppression d\'un sujet et de ses cartes');
 // Filtre « Non lus » : une carte lue pendant la consultation reste visible, pas les cartes lues avant

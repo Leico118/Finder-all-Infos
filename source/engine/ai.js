@@ -180,7 +180,7 @@ export function analysisSystem(topic) {
   const leakers = c.leakers?.length ? ` (par ex. ${c.leakers.join(', ')})` : '';
   const rules = [
     `N'invente jamais rien. N'utilise que ce qui figure dans les articles fournis. Aucune valeur, date ou nom absent des textes ne doit apparaître. N'utilise pas tes connaissances préalables pour compléter. Si un extrait est trop vague pour être exploité, ignore l'article.`,
-    `Périmètre : uniquement ${topic.name}${c.description ? ` (${c.description})` : ''}.${exclude} Ignore aussi les articles où le sujet n'est cité qu'en passant, les promotions et les contenus sans information nouvelle.`,
+    `Périmètre : uniquement ${topic.name}${c.description ? ` (${c.description})` : ''}.${exclude} Ignore aussi les articles où le sujet n'est cité qu'en passant, les promotions et les contenus sans information nouvelle.${c.focus ? ` IMPORTANT : l'utilisateur ne s'intéresse qu'à ceci : « ${c.focus} ». Tout article qui n'entre pas dans ce cadre est ignoré (ref null), même s'il concerne ${topic.name}.` : ''}`,
     product && c.rivals?.length
       ? `Concurrents (articles kind=competitor) : ne garde que les nouveautés majeures de produits concurrents à venir (${c.rivals.join(', ')} ou équivalents) susceptibles de rivaliser avec ${topic.name}. Ignore : tests de produits déjà commercialisés, promotions, accessoires, détails mineurs.`
       : `Il n'y a pas de catégorie concurrent pour ce sujet : category vaut toujours "target".`,
@@ -253,24 +253,38 @@ Chaque article doit figurer une fois dans "items". Les cartes "new:N" doivent to
 }
 
 // ---------- Remplir une fiche à partir des actualités déjà trouvées ----------
-export function sheetFillSystem(topic) {
+// discover : pour un sujet général (une marque…), repérer aussi les modèles précis cités dans les actualités.
+export function sheetFillSystem(topic, { discover = false, focus = '' } = {}) {
   const c = topic.config || {};
   const doc = (c.spec_groups || []).map(g => `${g.label} : ${g.items.map(([k, l]) => `${k} (${l})`).join(', ')}`).join('\n');
   return `Tu remplis la ${sheetName(topic)} de « ${topic.name} » à partir d'actualités déjà vérifiées et résumées.
 Tu réponds UNIQUEMENT par un objet JSON valide. Valeurs en français, concises (quelques mots, avec la date si utile).
 N'invente rien : une ligne ne reçoit une valeur que si une actualité fournie l'indique explicitement ; sinon ne la mentionne pas.
 Si plusieurs actualités se contredisent, garde la plus fiable, puis la plus récente.
-Fiabilité de chaque valeur = celle de l'actualité d'où elle vient (official, reliable, rumor, unverified).
-
-LIGNES AUTORISÉES
-${doc}`;
+Fiabilité de chaque valeur = celle de l'actualité d'où elle vient (official, reliable, rumor, unverified).${focus ? `\nL'utilisateur ne s'intéresse qu'à : ${focus}. Ignore le reste.` : ''}${discover ? `
+Liste aussi dans "models" les produits précis (modèles commerciaux, ex. « Fairphone 6 », « BYD Seal U ») de ce sujet qui sont explicitement cités dans les actualités${focus ? ', uniquement dans le cadre indiqué ci-dessus' : ''}, avec leur type en un mot (téléphone, voiture, écouteurs…). Pas d'accessoires ni de produits d'autres marques. Liste vide si aucun.` : ''}
+${doc ? `\nLIGNES AUTORISÉES\n${doc}` : '\nPas de lignes à remplir : spec_updates est une liste vide.'}`;
 }
 
-export function sheetFillUser(cards) {
+export function sheetFillUser(cards, { discover = false } = {}) {
   return `ACTUALITÉS (une par ligne, des plus récentes aux plus anciennes)
 ${cards.map(c => JSON.stringify({ id: c.id, date: c.latest_at ? new Date(c.latest_at).toISOString().slice(0, 10) : null,
     reliability: c.reliability, title: c.title, summary: c.summary, detail: (c.detail || '').slice(0, 900) })).join('\n')}
 
 Réponds avec ce JSON :
-{ "spec_updates": [ { "key": "clé autorisée", "value": "…", "reliability": "official | reliable | rumor | unverified", "ref": "<id de l'actualité>", "note": "" } ] }`;
+{ "spec_updates": [ { "key": "clé autorisée", "value": "…", "reliability": "official | reliable | rumor | unverified", "ref": "<id de l'actualité>", "note": "" } ]${discover ? `,
+  "models": [ { "name": "nom exact du modèle", "kind": "type en un mot" } ]` : ''} }`;
+}
+
+// ---------- Tri des actualités déjà trouvées selon ce qui intéresse l'utilisateur ----------
+export const CLEAN_SYSTEM = `Tu fais le tri dans les actualités d'une application de veille. Tu réponds UNIQUEMENT par un objet JSON valide.
+Tu retires seulement les actualités qui sortent clairement du cadre indiqué par l'utilisateur ; en cas de doute, tu gardes.`;
+
+export function cleanUser(topic, focus, cards) {
+  return `Sujet : « ${topic.name} ». L'utilisateur ne s'intéresse qu'à : ${focus}
+
+ACTUALITÉS
+${cards.map(c => JSON.stringify({ id: c.id, title: c.title, summary: c.summary })).join('\n')}
+
+Réponds avec ce JSON : { "remove": ["id des actualités hors cadre"] }`;
 }

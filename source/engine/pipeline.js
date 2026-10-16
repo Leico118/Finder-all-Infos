@@ -5,6 +5,7 @@ import { SITE_FEEDS, topicFeeds } from './sources.js';
 import { topicMatchers } from './topics.js';
 import { callAI, aiConfigured, analysisSystem, analysisUser, specKeys, backupActive, backupConfigured, lastAIProvider } from './ai.js';
 import { searchConfigured, webSearch, pickQueries, DAILY_BUDGET } from './websearch.js';
+import { refreshSheets } from './sheet.js';
 
 const DAY = 86400000;
 const BATCH = 6;
@@ -357,6 +358,7 @@ async function applyAnalysis(env, topic, pending, cards, out, now, stats) {
       hist(id, 'created', `Carte créée (${REL_FR[f.reliability]}) à partir de ${its.length} source(s).`);
       if (f.contradiction) hist(id, 'contradiction', f.contradiction);
       stats.created++;
+      (stats.touched ||= new Set()).add(topic.id);
       if (f.reliability === 'official' || f.importance >= 2) stats.notify.push({ topic, id, title: f.title, rel: f.reliability, imp: f.importance });
     } else {
       id = ref;
@@ -382,6 +384,7 @@ async function applyAnalysis(env, topic, pending, cards, out, now, stats) {
         if (f.official_confirmation && f.reliability === 'official' && prev.reliability !== 'official') hist(id, 'official', 'Confirmation officielle.');
         if (f.contradiction) hist(id, 'contradiction', f.contradiction);
         stats.updated++;
+        (stats.touched ||= new Set()).add(topic.id);
         if (f.reliability === 'official' && prev.reliability !== 'official') stats.notify.push({ topic, id, title: f.title || prev.title, rel: 'official', imp: 3 });
       } else {
         stmts.push(DB.prepare('UPDATE cards SET latest_at = MAX(COALESCE(latest_at, 0), ?) WHERE id = ?').bind(maxPub, id));
@@ -472,14 +475,16 @@ async function sendNotifications(env, list) {
 export async function purgeOrphans(env) {
   const orphan = 'topic_id NOT IN (SELECT id FROM topics)';
   const cardOrphan = `card_id IN (SELECT id FROM cards WHERE ${orphan})`;
+  // Fiches des modèles (« sujet~modèle ») : gardées tant que le sujet existe.
+  const specOrphan = `NOT EXISTS (SELECT 1 FROM topics t WHERE topic_id = t.id OR topic_id LIKE t.id || '~%')`;
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM card_sources WHERE ${cardOrphan}`),
     env.DB.prepare(`DELETE FROM card_history WHERE ${cardOrphan}`),
     env.DB.prepare(`DELETE FROM card_reads WHERE ${cardOrphan}`),
     env.DB.prepare(`DELETE FROM cards WHERE ${orphan}`),
     env.DB.prepare(`DELETE FROM raw_items WHERE ${orphan}`),
-    env.DB.prepare(`DELETE FROM specs WHERE ${orphan}`),
-    env.DB.prepare(`DELETE FROM spec_history WHERE ${orphan}`),
+    env.DB.prepare(`DELETE FROM specs WHERE ${specOrphan}`),
+    env.DB.prepare(`DELETE FROM spec_history WHERE ${specOrphan}`),
   ]);
 }
 
@@ -560,6 +565,9 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000, onProgress = 
     await analysisRun;
     if (lost) return preempted(stats);
     await purgeOrphans(env);                                          // sujet supprimé pendant cette actualisation
+    if (mode !== 'background' || Date.now() - t0 < budgetMs) {
+      try { stats.sheets = await refreshSheets(env, await loadTopics(env), stats.touched); } catch { /* facultatif */ }
+    }
     const { results: aliveT } = await env.DB.prepare('SELECT id FROM topics').all();
     const aliveIds = new Set((aliveT || []).map(r => r.id));
     await sendNotifications(env, stats.notify.filter(n => aliveIds.has(n.topic?.id)));
@@ -581,5 +589,6 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000, onProgress = 
   delete stats.notify;
   delete stats.progress;
   delete stats.found;
+  delete stats.touched;
   return stats;
 }

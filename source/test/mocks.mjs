@@ -42,6 +42,9 @@ export async function fakeFetch(url, opts = {}) {
     } else if (system.includes('Tu remplis la')) {
       const first = user.match(/"id":"([^"]+)"/)?.[1];
       out = { spec_updates: [{ key: 'battery', value: '80 kWh', reliability: 'official', ref: first }, { key: 'inventee', value: 'x', reliability: 'official', ref: first }] };
+      if (user.includes('"models"')) out.models = [{ name: 'BYD Seal', kind: 'voiture' }, { name: 'BYD Seal', kind: 'voiture' }, { name: 'BYD Atto 2', kind: 'voiture' }];
+    } else if (system.includes('Tu fais le tri')) {
+      out = { remove: [...user.matchAll(/"id":"([^"]+)","title":"[^"]*(écouteurs|Fairbuds)/gi)].map(m => m[1]).concat(['id-inexistant']) };
     } else if (user.includes("Sujet tapé par l'utilisateur")) {
       calls.topicGen++;
       out = topicResponse;

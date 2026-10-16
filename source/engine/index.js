@@ -1,8 +1,9 @@
 // Moteur local de l'application : mêmes routes que l'ancienne API web, exécutées sur le téléphone.
 import { SCHEMA, SCHEMA_VERSION } from './schema.js';
 import { setFetch, http } from './net.js';
-import { tick, getMeta, setMeta, dayStart, loadTopics, purgeOrphans, applySpecs } from './pipeline.js';
-import { aiConfigured, callAI, callGroq, backupConfigured, sheetFillSystem, sheetFillUser } from './ai.js';
+import { tick, getMeta, setMeta, dayStart, loadTopics, purgeOrphans } from './pipeline.js';
+import { aiConfigured, callAI, callGroq, backupConfigured, CLEAN_SYSTEM, cleanUser } from './ai.js';
+import { fillSheet, mergeModels, modelTopic, saveTopicConfig } from './sheet.js';
 import { searchConfigured, tavily } from './websearch.js';
 import { DEFAULT_TOPIC, MAX_TOPICS, TOPIC_SYSTEM, topicUserPrompt, sanitizeConfig, SHEET_SYSTEM, sheetUserPrompt, parseGroups } from './topics.js';
 import { SITE_FEEDS, topicFeeds } from './sources.js';
@@ -133,14 +134,17 @@ export function createEngine(platform) {
     const topic = topics.find(t => t.id === q.get('topic')) || topics.find(t => (t.config.spec_groups || []).length) || topics[0];
     const list = topics.map(t => ({ id: t.id, name: t.name, short: t.config.short, type: t.type, has_sheet: (t.config.spec_groups || []).length > 0 }));
     if (!topic) return ok({ topics: [], topic: null, groups: [], known: 0, total: 0 });
+    const models = (topic.config.models || []).map(m => ({ id: m.id, name: m.name, kind: m.kind, has_sheet: (m.groups || []).length > 0 }));
+    const model = (topic.config.models || []).find(m => m.id === q.get('model') && (m.groups || []).length) || null;
+    const sheet = model ? modelTopic(topic, model) : topic;
     const cardsN = (await E.DB.prepare('SELECT COUNT(*) AS n FROM cards WHERE topic_id = ?').bind(topic.id).first())?.n || 0;
-    const { results: specs } = await E.DB.prepare('SELECT * FROM specs WHERE topic_id = ?').bind(topic.id).all();
+    const { results: specs } = await E.DB.prepare('SELECT * FROM specs WHERE topic_id = ?').bind(sheet.id).all();
     const { results: hist } = await E.DB.prepare(
-      'SELECT key, value, reliability, note, accepted, at, card_id FROM spec_history WHERE topic_id = ? ORDER BY at DESC LIMIT 400').bind(topic.id).all();
+      'SELECT key, value, reliability, note, accepted, at, card_id FROM spec_history WHERE topic_id = ? ORDER BY at DESC LIMIT 400').bind(sheet.id).all();
     const byKey = Object.fromEntries((specs || []).map(s => [s.key, s]));
     const histByKey = {};
     for (const h of hist || []) (histByKey[h.key] ||= []).push(h);
-    const groups = (topic.config.spec_groups || []).map((g, i) => ({
+    const groups = (sheet.config.spec_groups || []).map((g, i) => ({
       id: `g${i}`, label: g.label,
       items: g.items.map(([key, label]) => {
         const s = byKey[key];
@@ -151,8 +155,9 @@ export function createEngine(platform) {
     }));
     const total = groups.reduce((n, g) => n + g.items.length, 0);
     const known = groups.reduce((n, g) => n + g.items.filter(i => i.value).length, 0);
-    return ok({ topics: list, topic: { id: topic.id, name: topic.name, type: topic.type, cards: cardsN }, groups, known, total,
-      filled_at: Number(await getMeta(E, `sheet_fill_${topic.id}`)) || null });
+    return ok({ topics: list, topic: { id: topic.id, name: topic.name, type: topic.type, cards: cardsN, focus: topic.config.focus || '' },
+      model: model ? { id: model.id, name: model.name, kind: model.kind } : null, models, groups, known, total,
+      filled_at: Number(await getMeta(E, `sheet_fill_${sheet.id}`)) || null });
   }
 
   // Crée la fiche d'un sujet qui n'en a pas (ou la refait), puis la remplit avec les actualités déjà trouvées.
@@ -170,30 +175,75 @@ export function createEngine(platform) {
       topic.config.spec_groups = groups;
       await E.DB.prepare('UPDATE topics SET config = ?, updated_at = ? WHERE id = ?').bind(JSON.stringify(topic.config), Date.now(), id).run();
     }
-    return fillSheet(E, topic);
+    return sheetResult(E, topic);
   }
 
-  async function fillSheet(E, topic) {
-    const { results: cards } = await E.DB.prepare(
-      `SELECT id, reliability, title, summary, detail, latest_at FROM cards WHERE topic_id = ? AND category = 'target' ORDER BY latest_at DESC LIMIT 40`)
-      .bind(topic.id).all();
-    let filled = 0;
-    if (cards?.length) {
-      let out;
-      try { out = await callAI({ ...E, aiTimeout: 60000 }, sheetFillSystem(topic), sheetFillUser(cards)); }
-      catch (e) { return fail(`Fiche créée, mais le remplissage a échoué : ${e.message}`, 502); }
-      const refToId = new Map(cards.map(c => [c.id, c.id]));
-      const byRef = new Map();
-      for (const c of cards) {
-        const { results: src } = await E.DB.prepare('SELECT url, source_name, published_at FROM card_sources WHERE card_id = ? ORDER BY published_at DESC LIMIT 1').bind(c.id).all();
-        byRef.set(c.id, src || []);
-      }
-      const before = (await E.DB.prepare('SELECT COUNT(*) AS n FROM specs WHERE topic_id = ?').bind(topic.id).first())?.n || 0;
-      await applySpecs(E, topic, out?.spec_updates, refToId, byRef, Date.now());
-      filled = ((await E.DB.prepare('SELECT COUNT(*) AS n FROM specs WHERE topic_id = ?').bind(topic.id).first())?.n || 0) - before;
+  async function sheetResult(E, topic, opts) {
+    try { return ok({ ok: true, ...(await fillSheet(E, topic, opts)) }); }
+    catch (e) { return fail(`Fiche prête, mais le remplissage a échoué : ${e.message}`, 502); }
+  }
+
+  // Fiche technique d'un modèle repéré dans un sujet général (ex. « Fairphone 6 » dans « Fairphone »).
+  async function buildModelSheet(E, id, mid, body) {
+    const topic = (await loadTopics(E)).find(t => t.id === id);
+    if (!topic) return fail('Sujet introuvable', 404);
+    if (!aiConfigured(E)) return fail("Ajoutez d'abord votre clé Gemini.");
+    const model = (topic.config.models || []).find(m => m.id === mid);
+    if (!model) return fail('Modèle introuvable', 404);
+    if (!(model.groups || []).length || body?.regenerate) {
+      let raw;
+      try { raw = await callAI({ ...E, aiTimeout: 45000 }, SHEET_SYSTEM, sheetUserPrompt({ name: model.name, type: 'product', config: { description: `${model.kind || 'produit'} de ${topic.name}` } })); }
+      catch (e) { return fail(`L'IA n'a pas pu préparer la fiche : ${e.message}`, 502); }
+      const groups = parseGroups(raw?.spec_groups, 'product');
+      if (!groups.length) return fail('L\'IA n\'a pas proposé de fiche exploitable, réessayez.', 502);
+      model.groups = groups;
+      await saveTopicConfig(E, topic);
     }
-    await setMeta(E, `sheet_fill_${topic.id}`, String(Date.now()));
-    return ok({ ok: true, filled, cards: cards?.length || 0 });
+    return sheetResult(E, topic, { model });
+  }
+
+  async function addModel(E, id, body) {
+    const topic = (await loadTopics(E)).find(t => t.id === id);
+    if (!topic) return fail('Sujet introuvable', 404);
+    const name = String(body?.name || '').trim();
+    if (name.length < 2) return fail('Tapez le nom du modèle.');
+    await mergeModels(E, topic, [{ name, kind: '' }]);
+    return ok({ ok: true, models: topic.config.models });
+  }
+
+  async function removeModel(E, id, mid) {
+    const topic = (await loadTopics(E)).find(t => t.id === id);
+    if (!topic) return fail('Sujet introuvable', 404);
+    topic.config.models = (topic.config.models || []).filter(m => m.id !== mid);
+    await saveTopicConfig(E, topic);
+    await E.DB.batch([`${id}~${mid}`].flatMap(sid => [
+      E.DB.prepare('DELETE FROM specs WHERE topic_id = ?').bind(sid), E.DB.prepare('DELETE FROM spec_history WHERE topic_id = ?').bind(sid)]));
+    return ok({ ok: true });
+  }
+
+  // Retire les actualités déjà trouvées qui sortent de « ce qui m'intéresse ».
+  async function cleanTopic(E, id) {
+    const topic = (await loadTopics(E)).find(t => t.id === id);
+    if (!topic) return fail('Sujet introuvable', 404);
+    if (!topic.config.focus) return fail('Indiquez d\'abord ce qui vous intéresse dans ce sujet.');
+    if (!aiConfigured(E)) return fail("Ajoutez d'abord votre clé Gemini.");
+    const { results: cards } = await E.DB.prepare('SELECT id, title, summary FROM cards WHERE topic_id = ? ORDER BY latest_at DESC LIMIT 120').bind(id).all();
+    if (!cards?.length) return ok({ removed: 0 });
+    let out;
+    try { out = await callAI({ ...E, aiTimeout: 60000 }, CLEAN_SYSTEM, cleanUser(topic, topic.config.focus, cards)); }
+    catch (e) { return fail(`Tri impossible : ${e.message}`, 502); }
+    const ids = new Set(cards.map(c => c.id));
+    const remove = (Array.isArray(out?.remove) ? out.remove : []).map(String).filter(x => ids.has(x));
+    if (remove.length) {
+      await E.DB.batch(remove.flatMap(cid => [
+        E.DB.prepare('DELETE FROM card_sources WHERE card_id = ?').bind(cid),
+        E.DB.prepare('DELETE FROM card_history WHERE card_id = ?').bind(cid),
+        E.DB.prepare('DELETE FROM card_reads WHERE card_id = ?').bind(cid),
+        E.DB.prepare('UPDATE specs SET card_id = NULL WHERE card_id = ?').bind(cid),
+        E.DB.prepare('DELETE FROM cards WHERE id = ? AND topic_id = ?').bind(cid, id),
+      ]));
+    }
+    return ok({ removed: remove.length });
   }
 
   async function getStatus(E) {
@@ -242,7 +292,7 @@ export function createEngine(platform) {
     const tsBy = Object.fromEntries((ts || []).map(s => [s.topic_id, s]));
     return ok({ topics: topics.map(t => ({ id: t.id, name: t.name, type: t.type, short: t.config.short, description: t.config.description,
       match: t.config.match, exclude: t.config.exclude, rivals: t.config.rivals, queries: t.config.queries, web_queries: t.config.web_queries,
-      tech: !!t.config.tech, spec_groups: t.config.spec_groups, cards: counts[t.id] || 0, last_collect: tsBy[t.id]?.last_collect || null })),
+      tech: !!t.config.tech, spec_groups: t.config.spec_groups, focus: t.config.focus || '', models: (t.config.models || []).map(m => m.name), cards: counts[t.id] || 0, last_collect: tsBy[t.id]?.last_collect || null })),
       max: MAX_TOPICS });
   }
 
@@ -287,6 +337,7 @@ export function createEngine(platform) {
     if (body?.match !== undefined) { const m = list(body.match); if (m.length) config.match = m; }
     if (body?.exclude !== undefined) config.exclude = list(body.exclude);
     if (body?.rivals !== undefined) config.rivals = list(body.rivals);
+    if (typeof body?.focus === 'string') config.focus = body.focus.trim().slice(0, 240);
     const type = body?.type === 'product' || body?.type === 'general' ? body.type : row.type;
     if (type === 'product' && !(config.spec_groups || []).length) config.spec_groups = [];
     await E.DB.prepare('UPDATE topics SET name = ?, type = ?, config = ?, updated_at = ? WHERE id = ?')
@@ -301,8 +352,8 @@ export function createEngine(platform) {
       E.DB.prepare('DELETE FROM card_reads WHERE card_id IN (SELECT id FROM cards WHERE topic_id = ?)').bind(id),
       E.DB.prepare('DELETE FROM cards WHERE topic_id = ?').bind(id),
       E.DB.prepare('DELETE FROM raw_items WHERE topic_id = ?').bind(id),
-      E.DB.prepare('DELETE FROM specs WHERE topic_id = ?').bind(id),
-      E.DB.prepare('DELETE FROM spec_history WHERE topic_id = ?').bind(id),
+      E.DB.prepare(`DELETE FROM specs WHERE topic_id = ? OR topic_id LIKE ? || '~%'`).bind(id, id),
+      E.DB.prepare(`DELETE FROM spec_history WHERE topic_id = ? OR topic_id LIKE ? || '~%'`).bind(id, id),
       E.DB.prepare('DELETE FROM topic_state WHERE topic_id = ?').bind(id),
       E.DB.prepare('DELETE FROM source_state WHERE topic_id = ?').bind(id),
       E.DB.prepare('DELETE FROM topics WHERE id = ?').bind(id),
@@ -449,6 +500,10 @@ export function createEngine(platform) {
       if (method === 'PUT' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)$/))) return await updateTopic(E, m[1], body);
       if (method === 'DELETE' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)$/))) return await deleteTopic(E, m[1]);
       if (method === 'POST' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)\/sheet$/))) return await buildSheet(E, m[1], body);
+      if (method === 'POST' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)\/models\/([\w-]+)\/sheet$/))) return await buildModelSheet(E, m[1], m[2], body);
+      if (method === 'POST' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)\/models$/))) return await addModel(E, m[1], body);
+      if (method === 'DELETE' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)\/models\/([\w-]+)$/))) return await removeModel(E, m[1], m[2]);
+      if (method === 'POST' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)\/clean$/))) return await cleanTopic(E, m[1]);
       if (method === 'POST' && p === '/api/setup') return await setup(E, body);
       if (method === 'POST' && p === '/api/refresh') return await refresh(E, q, ctx);
       if (method === 'GET' && p === '/api/update') return await checkUpdate();
