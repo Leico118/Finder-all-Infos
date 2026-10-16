@@ -21,6 +21,10 @@ const shot = n => p.screenshot({ path: `${out}/p-${n}.png` });
 await p.goto('http://localhost:5175/index.html'); await p.waitForTimeout(3000); await shot('1-first');
 const welcome = await p.isVisible('text=Bienvenue');                     // premier lancement : choix du mode
 if (welcome) { await p.click('text=Mode complet'); await p.waitForTimeout(1000); }
+// Guide de démarrage : on le parcourt jusqu'au bout, puis « Étape 1 » ouvre l'assistant des clés
+const tutoShown = await p.isVisible('text=Radar fait la veille');
+while (await p.isVisible('button:has-text("Suivant")')) { await p.click('button:has-text("Suivant")'); await p.waitForTimeout(400); }
+await p.click('button:has-text("connecter l\'IA")'); await p.waitForTimeout(800);
 // Assistant de configuration : Gemini détectée toute seule dans le presse-papiers au retour dans Radar
 await p.click('button:has-text("Ouvrir le site de Google")'); const opened = await p.evaluate(() => window.__opened);
 await shot('1b-assistant');
@@ -43,6 +47,6 @@ await p.click('li button >> nth=0'); await p.waitForTimeout(1500); await shot('4
 await p.goto('http://localhost:5175/index.html#/fiche'); await p.waitForTimeout(1500); await shot('5-specs');
 const notes = await (await p.request.get('http://localhost:5175/__notifications')).json();
 console.log(JSON.stringify({ errors: errs, battery, notifications: notes.map(n => n.title),
-  hasX10: text.includes('8 000 mAh'), hasByd: text.includes('BYD lance'), welcome, autoKey, opened,
+  tutoShown, hasX10: text.includes('8 000 mAh'), hasByd: text.includes('BYD lance'), welcome, autoKey, opened,
   legacy: text.includes('LOFIC') }));
 await b.close();

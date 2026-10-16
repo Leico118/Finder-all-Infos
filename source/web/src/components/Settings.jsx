@@ -167,7 +167,22 @@ function SetupBanner({ simple }) {
   );
 }
 
-export default function Settings({ onRefresh, refreshing, refreshMsg, progress, onTopicsChanged, focusTopics, simple = false, onModeChange }) {
+// Relancer le guide de démarrage (juste au-dessus de la version et des mises à jour).
+function GuideBlock({ simple, onTutorial }) {
+  return (
+    <button onClick={onTutorial}
+      className={`flex w-full items-center gap-4 rounded-3xl bg-surface text-left ring-1 ring-line transition active:scale-[0.99] animate-rise ${simple ? 'p-6' : 'p-5'}`}>
+      <span className={`grid shrink-0 place-items-center rounded-2xl bg-accent/15 font-semibold text-accent ${simple ? 'h-12 w-12 text-[22px]' : 'h-10 w-10 text-[18px]'}`} aria-hidden>?</span>
+      <span className="min-w-0 flex-1">
+        <span className={`block font-medium text-ink ${simple ? 'text-[19px]' : 'text-sm'}`}>Revoir le guide de démarrage</span>
+        <span className={`block text-muted ${simple ? 'mt-1 text-[16px]' : 'text-xs'}`}>Les premières étapes et à quoi sert chaque partie, en une minute.</span>
+      </span>
+      <span className={`shrink-0 leading-none text-faint ${simple ? 'text-[28px]' : 'text-[22px]'}`} aria-hidden>›</span>
+    </button>
+  );
+}
+
+export default function Settings({ onRefresh, refreshing, refreshMsg, progress, onTopicsChanged, focusTopics, simple = false, onModeChange, onTutorial }) {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
   const [openGroup, setOpenGroup] = useState(null);
@@ -230,6 +245,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
             </section>
           )}
 
+          {onTutorial && <GuideBlock simple onTutorial={onTutorial} />}
           {isNative() && <AppUpdate version={dev?.version} simple />}
         </div>
       </div>
@@ -381,6 +397,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
           </ul>
         </Block>
 
+        {onTutorial && <GuideBlock onTutorial={onTutorial} />}
         {isNative() && <AppUpdate version={dev?.version} />}
         {status?.legacy?.cards > 0 && (
           <p className="px-2 text-center text-[11px] text-faint">{status.legacy.cards} actualité{status.legacy.cards > 1 ? 's' : ''} reprise{status.legacy.cards > 1 ? 's' : ''} de l'application web Find X10 Ultra.</p>

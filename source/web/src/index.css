@@ -128,3 +128,18 @@ html[data-theme="contraste"] {
 }
 html[data-theme="contraste"] body { font-weight: 500; }
 html[data-theme="contraste"] [class*="text-ink\/"] { color: #ffffff; }
+
+/* ================= Guide de démarrage ================= */
+@keyframes tuto-in-right { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes tuto-in-left { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+@keyframes tuto-sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes tuto-blip { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+.tuto-in-right { animation: tuto-in-right 0.32s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.tuto-in-left { animation: tuto-in-left 0.32s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.tuto-sweep { transform-origin: 50px 50px; animation: tuto-sweep 4s linear infinite; }
+.tuto-blip { animation: tuto-blip 2s ease-in-out infinite; }
+html[data-theme="verre"] .tuto {
+  background:
+    radial-gradient(85% 55% at 10% 0%, color-mix(in srgb, var(--tint) 62%, transparent) 0%, transparent 72%),
+    linear-gradient(165deg, color-mix(in srgb, var(--tint) 42%, #1b150e) 0%, color-mix(in srgb, var(--tint) 16%, #120f0b) 55%, #0e0c0a 100%);
+}

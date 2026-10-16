@@ -1,3 +1,4 @@
+import { FirstSteps, FIRST_STEPS, firstStepsStore } from './Tutorial.jsx';
 // Mode simplifié : gros caractères, l'essentiel seulement (pensé pour une utilisation sans effort).
 import { useEffect, useState } from 'react';
 import { IconRefresh, IconBack, IconExternal } from './Icons.jsx';
@@ -62,7 +63,8 @@ export function SimpleFeed({ topics, topic, setTopic, stopic, data, loading, err
       </BigButton>
       {refreshing && progress && <RefreshProgress progress={progress} />}
       {!refreshing && refreshMsg && <p className="mb-4 rounded-2xl bg-surface-2 px-4 py-3 text-[16px] text-ink/90 ring-1 ring-line" role="status">{refreshMsg}</p>}
-      {data?.setup && !data.setup.ai_configured && (
+      {data?.setup && <FirstSteps simple aiConfigured={data.setup.ai_configured} lastSync={data.last_sync} onRefresh={onRefresh} refreshing={refreshing} />}
+      {data?.setup && !data.setup.ai_configured && firstStepsStore.get(FIRST_STEPS) !== '1' && (
         <a href="#/cles" className="mb-4 block rounded-2xl bg-accent/10 px-5 py-4 text-[17px] text-ink ring-1 ring-accent/30">
           Il reste un réglage à faire avant de pouvoir lire les nouvelles. <span className="text-accent underline">Configurer Radar</span>
         </a>

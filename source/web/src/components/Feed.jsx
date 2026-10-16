@@ -3,6 +3,7 @@ import { IconRefresh, IconAlert } from './Icons.jsx';
 import { cardDate, timeAgo, monthKey, monthLabel } from '../util.js';
 import { useEffect, useRef, useState } from 'react';
 import RefreshProgress from './RefreshProgress.jsx';
+import { FirstSteps, FIRST_STEPS, firstStepsStore } from './Tutorial.jsx';
 
 export default function Feed({ topics, topic, setTopic, filter, setFilter, unreadOnly = false, setUnreadOnly, data, loading, error, refreshing, refreshMsg, progress, fresh = 0, onRefresh, onOpen, onReadAll }) {
   // Cartes arrivées pendant la lecture : si l'utilisateur a fait défiler la liste, un bouton le ramène en haut.
@@ -68,7 +69,8 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, unrea
           className="mb-2 grid h-8 w-8 shrink-0 place-items-center rounded-full text-[18px] leading-none text-accent ring-1 ring-accent/40 active:bg-accent/10">+</a>
       </nav>
 
-      {data?.setup && !data.setup.ai_configured && (
+      {data?.setup && <FirstSteps aiConfigured={data.setup.ai_configured} lastSync={data.last_sync} onRefresh={onRefresh} refreshing={refreshing} />}
+      {data?.setup && !data.setup.ai_configured && firstStepsStore.get(FIRST_STEPS) !== '1' && (
         <a href="#/cles" className="mb-4 block rounded-2xl bg-accent/10 px-4 py-3 text-sm text-ink ring-1 ring-accent/30 animate-rise">
           <b className="text-accent">Première étape :</b> configurez Radar en quelques minutes pour que les articles soient traduits et classés →
         </a>

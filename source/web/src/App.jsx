@@ -6,6 +6,7 @@ import Specs from './components/Specs.jsx';
 import Settings from './components/Settings.jsx';
 import { SimpleFeed, Welcome } from './components/Simple.jsx';
 import KeySetup from './components/KeySetup.jsx';
+import Tutorial, { FIRST_STEPS, FIRST_STEPS_TOPICS } from './components/Tutorial.jsx';
 import { IconNews, IconSpecs, IconSettings } from './components/Icons.jsx';
 
 const store = {
@@ -49,6 +50,8 @@ export default function App() {
   const scrollPos = useRef(0);
   const navigatedInApp = useRef(false);
   const syncing = useRef(false);
+  const [tuto, setTuto] = useState(false);                 // guide de démarrage affiché par-dessus l'application
+  const closeTuto = target => { setTuto(false); if (target) window.location.hash = target; };
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
@@ -87,6 +90,7 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadTopics(); }, []);
+  useEffect(() => { if (route.view === 'settings' && route.topics) store.set(FIRST_STEPS_TOPICS, '1'); }, [route]);
   useEffect(() => {
     api.status().then(st => {
       const m = st.ui_mode || (st.ai?.configured ? 'full' : 'welcome');   // installation existante : mode complet
@@ -231,7 +235,7 @@ export default function App() {
   const currentTopic = topics.find(t => t.id === topic);
 
   if (mode === 'welcome') {
-    return <div className="mx-auto min-h-screen max-w-xl"><Welcome onChoose={m => { changeMode(m); window.location.hash = '#/cles'; }} /></div>;
+    return <div className="mx-auto min-h-screen max-w-xl"><Welcome onChoose={m => { changeMode(m); store.set(FIRST_STEPS, '1'); window.location.hash = '#/'; setTuto(true); }} /></div>;
   }
 
   return (
@@ -253,8 +257,11 @@ export default function App() {
       {route.view === 'specs' && !simple && <Specs onOpenCard={id => go(`#/carte/${id}`)} topic={topic} />}
       {route.view === 'settings' && (
         <Settings onRefresh={() => refresh()} refreshing={refreshing} refreshMsg={refreshMsg} progress={progress}
-          onTopicsChanged={() => { loadTopics(); load(); }} focusTopics={route.topics} simple={simple} onModeChange={changeMode} />
+          onTopicsChanged={() => { loadTopics(); load(); }} focusTopics={route.topics} simple={simple} onModeChange={changeMode}
+          onTutorial={() => setTuto(true)} />
       )}
+
+      {tuto && <Tutorial simple={simple} onClose={closeTuto} />}
 
       {route.view !== 'keys' && <nav className="app-nav nav-safe fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/85 backdrop-blur-xl">
         <ul className="mx-auto flex max-w-xl justify-around px-2 pt-2">
