@@ -3,7 +3,8 @@ import { callAI, aiConfigured, sheetFillSystem, sheetFillUser } from './ai.js';
 import { applySpecs, setMeta } from './pipeline.js';
 
 export const modelSheetId = (topic, model) => `${topic.id}~${model.id}`;
-export const modelSlug = name => String(name).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+// « Fairphone 6+ » et « Fairphone 6 Plus » donnent le même identifiant, distinct de « Fairphone 6 ».
+export const modelSlug = name => String(name).replace(/\+/g, ' plus ').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
   .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'modele';
 
 // Un modèle se manipule comme un petit sujet « produit » dont les valeurs sont rangées à part.
@@ -51,6 +52,7 @@ export async function fillSheet(env, topic, { model = null } = {}) {
 // Ajoute les modèles repérés (sans doublon, 12 au plus) ; les fiches déjà générées sont conservées.
 export async function mergeModels(env, topic, list) {
   const models = Array.isArray(topic.config.models) ? topic.config.models : [];
+  for (const m of models) if (!m.id) m.id = modelSlug(m.name);
   let added = 0;
   for (const m of list.slice(0, 20)) {
     const name = String(m?.name || '').trim().slice(0, 60);

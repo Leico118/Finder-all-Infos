@@ -130,9 +130,14 @@ assert(r.status === 200 && (await api('GET', '/api/topics')).data.topics.find(t 
   assert(ms.status === 200 && mv.model?.id === seal.id && mv.groups.length === 1 && mv.known === 1 && base.model === null && base.models.find(m => m.id === seal.id).has_sheet,
     'fiche technique générée pour le seul modèle choisi, séparée de la fiche repères');
   const add = await api('POST', '/api/topics/voitures-byd/models', { name: 'BYD Dolphin' });
+  const plus = await api('POST', '/api/topics/voitures-byd/models', { name: 'BYD Seal+' });
+  const dup = await api('POST', '/api/topics/voitures-byd/models', { name: 'BYD Seal Plus' });
+  assert(plus.status === 200 && plus.data.model.id !== seal.id && dup.status === 409 && /déjà/.test(dup.data.error), '« Seal+ » distinct de « Seal », doublon signalé clairement');
   await api('DELETE', `/api/topics/voitures-byd/models/${seal.id}`);
   const left = bridge.db.prepare(`SELECT COUNT(*) n FROM specs WHERE topic_id = 'voitures-byd~${seal.id}'`).get().n;
   assert(add.data.models.length === 3 && left === 0, 'modèle ajouté à la main ; modèle retiré avec sa fiche');
+  const tiles = (await api('GET', '/api/specs?topic=voitures-byd')).data;
+  assert(tiles.main && typeof tiles.main.known === 'number' && tiles.models.every(m => typeof m.total === 'number'), 'avancement de chaque fiche pour les vignettes');
 }
 // « Ce qui m'intéresse » : consigne pour l'IA et tri des actualités déjà trouvées
 {

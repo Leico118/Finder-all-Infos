@@ -3,7 +3,7 @@ import { SCHEMA, SCHEMA_VERSION } from './schema.js';
 import { setFetch, http } from './net.js';
 import { tick, getMeta, setMeta, dayStart, loadTopics, purgeOrphans } from './pipeline.js';
 import { aiConfigured, callAI, callGroq, backupConfigured, CLEAN_SYSTEM, cleanUser } from './ai.js';
-import { fillSheet, mergeModels, modelTopic, saveTopicConfig } from './sheet.js';
+import { fillSheet, mergeModels, modelTopic, saveTopicConfig, modelSlug } from './sheet.js';
 import { searchConfigured, tavily } from './websearch.js';
 import { DEFAULT_TOPIC, MAX_TOPICS, TOPIC_SYSTEM, topicUserPrompt, sanitizeConfig, SHEET_SYSTEM, sheetUserPrompt, parseGroups } from './topics.js';
 import { SITE_FEEDS, topicFeeds } from './sources.js';
@@ -134,7 +134,13 @@ export function createEngine(platform) {
     const topic = topics.find(t => t.id === q.get('topic')) || topics.find(t => (t.config.spec_groups || []).length) || topics[0];
     const list = topics.map(t => ({ id: t.id, name: t.name, short: t.config.short, type: t.type, has_sheet: (t.config.spec_groups || []).length > 0 }));
     if (!topic) return ok({ topics: [], topic: null, groups: [], known: 0, total: 0 });
-    const models = (topic.config.models || []).map(m => ({ id: m.id, name: m.name, kind: m.kind, has_sheet: (m.groups || []).length > 0 }));
+    const { results: counts } = await E.DB.prepare(
+      `SELECT topic_id, COUNT(*) AS n, MAX(updated_at) AS at FROM specs WHERE topic_id = ? OR topic_id LIKE ? || '~%' GROUP BY topic_id`).bind(topic.id, topic.id).all();
+    const cnt = Object.fromEntries((counts || []).map(r => [r.topic_id, r]));
+    const size = groups => (groups || []).reduce((n, g) => n + g.items.length, 0);
+    const models = (topic.config.models || []).map(m => ({ id: m.id, name: m.name, kind: m.kind, has_sheet: (m.groups || []).length > 0,
+      known: cnt[`${topic.id}~${m.id}`]?.n || 0, total: size(m.groups), updated_at: cnt[`${topic.id}~${m.id}`]?.at || null }));
+    const main = { known: cnt[topic.id]?.n || 0, total: size(topic.config.spec_groups), updated_at: cnt[topic.id]?.at || null };
     const model = (topic.config.models || []).find(m => m.id === q.get('model') && (m.groups || []).length) || null;
     const sheet = model ? modelTopic(topic, model) : topic;
     const cardsN = (await E.DB.prepare('SELECT COUNT(*) AS n FROM cards WHERE topic_id = ?').bind(topic.id).first())?.n || 0;
@@ -156,7 +162,8 @@ export function createEngine(platform) {
     const total = groups.reduce((n, g) => n + g.items.length, 0);
     const known = groups.reduce((n, g) => n + g.items.filter(i => i.value).length, 0);
     return ok({ topics: list, topic: { id: topic.id, name: topic.name, type: topic.type, cards: cardsN, focus: topic.config.focus || '' },
-      model: model ? { id: model.id, name: model.name, kind: model.kind } : null, models, groups, known, total,
+      model: model ? { id: model.id, name: model.name, kind: model.kind } : null, models, main, groups, known, total,
+      updated_at: (model ? models.find(x => x.id === model.id)?.updated_at : main.updated_at) || null,
       filled_at: Number(await getMeta(E, `sheet_fill_${sheet.id}`)) || null });
   }
 
@@ -205,10 +212,14 @@ export function createEngine(platform) {
   async function addModel(E, id, body) {
     const topic = (await loadTopics(E)).find(t => t.id === id);
     if (!topic) return fail('Sujet introuvable', 404);
-    const name = String(body?.name || '').trim();
+    const name = String(body?.name || '').trim().slice(0, 60);
     if (name.length < 2) return fail('Tapez le nom du modèle.');
+    const mid = modelSlug(name);
+    const twin = (topic.config.models || []).find(m => m.id === mid);
+    if (twin) return fail(`« ${twin.name} » est déjà dans la liste.`, 409);
+    if ((topic.config.models || []).length >= 12) return fail('12 modèles au maximum : retirez-en un d\'abord.');
     await mergeModels(E, topic, [{ name, kind: '' }]);
-    return ok({ ok: true, models: topic.config.models });
+    return ok({ ok: true, model: { id: mid, name }, models: topic.config.models });
   }
 
   async function removeModel(E, id, mid) {
