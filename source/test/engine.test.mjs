@@ -127,6 +127,8 @@ assert(r.status === 200 && bridge.db.prepare("SELECT COUNT(*) n FROM cards WHERE
     `filtre Non lus (${ids.length} cartes, ${u.counts.unread} non lues, total ${all.length}, a lue avant ${!!a.read_at})`);
   const u2 = (await api('GET', '/api/cards?filter=unread')).data.cards.map(x => x.id);
   assert(!u2.includes(b2.id) && u2.includes(c.id), 'Non lus rouvert : les cartes lues disparaissent');
+  const comb = (await api('GET', '/api/cards?filter=competitors&unread=1')).data.cards;
+  assert(comb.every(x => x.category === 'competitor' && x.unread), `Non lus combiné avec un filtre (${comb.length} cartes)`);
 }
 // Création en double (second appui, écran rouvert) : un seul sujet, pas d'erreur
 setTopicResponse({ ...topicResponse, name: 'Nintendo Switch 3' });

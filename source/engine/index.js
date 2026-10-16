@@ -66,15 +66,14 @@ export function createEngine(platform) {
     const where = ['c.topic_id IN (SELECT id FROM topics)'];   // jamais de carte d'un sujet supprimé
     const args = [];
     if (topic) { where.push('c.topic_id = ?'); args.push(topic); }
-    if (q.get('filter') === 'unread') {
-      // Non lus : les cartes lues pendant la consultation de cette vue (depuis « since ») restent affichées.
+    // « Non lus » se combine avec les autres filtres ; les cartes lues pendant la consultation (depuis « since ») restent affichées.
+    if (q.get('filter') === 'unread' || q.get('unread') === '1') {
       const since = Number(q.get('since')) || 0;
       where.push(`(r.read_at IS NULL OR r.read_at < c.updated_at${since ? ' OR r.read_at >= ?' : ''})`);
       if (since) args.push(since);
-    } else {
-      const f = FILTERS[q.get('filter')] || '';
-      if (f) where.push(f);
     }
+    const f = FILTERS[q.get('filter')] || '';
+    if (f) where.push(f);
     const limit = Math.min(300, Number(q.get('limit')) || 150);
     const { results } = await E.DB.prepare(
       `SELECT c.id, c.topic_id, c.category, c.reliability, c.title, c.summary, c.latest_at, c.first_seen_at, c.created_at, c.updated_at,

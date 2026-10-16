@@ -31,23 +31,20 @@ export function BigButton({ children, className = '', ...p }) {
 // ---------- Liste des actualités ----------
 // Avec plusieurs sujets, l'écran d'accueil présente un grand bouton par sujet ; on entre dans un sujet,
 // puis « Mes sujets » ramène à l'accueil. Le choix est conservé en revenant d'une actualité.
-let simpleHome = true;
-export function goSimpleHome() { simpleHome = true; window.dispatchEvent(new Event('radar-simple-home')); }
-
 function nouvelles(n) {
   return n > 0 ? `${n} nouvelle${n > 1 ? 's' : ''} à lire` : 'Rien de nouveau';
 }
 
-export function SimpleFeed({ topics, topic, setTopic, data, loading, error, refreshing, refreshMsg, progress, onRefresh, onOpen }) {
+// L'adresse décide de l'écran (#/ = accueil des sujets, #/s/<sujet> = ses nouvelles) : le bouton retour d'Android y ramène.
+export function SimpleFeed({ topics, topic, setTopic, stopic, data, loading, error, refreshing, refreshMsg, progress, onRefresh, onOpen }) {
   const multi = topics.length > 1;
-  const [home, setHomeState] = useState(multi && simpleHome);
-  const setHome = v => { simpleHome = v; setHomeState(v); window.scrollTo(0, 0); };
-  useEffect(() => { if (!multi && home) setHomeState(false); }, [multi]);
-  useEffect(() => {                                       // onglet « Actualités » touché : retour à l'accueil des sujets
-    const onHome = () => multi && setHome(true);
-    window.addEventListener('radar-simple-home', onHome);
-    return () => window.removeEventListener('radar-simple-home', onHome);
-  }, [multi]);
+  const home = multi && !stopic;
+  useEffect(() => {
+    if (stopic) setTopic(stopic === 'tout' ? '' : stopic);
+    else if (multi) setTopic('');
+    window.scrollTo(0, 0);
+  }, [stopic, multi]);
+  const setHome = () => window.location.replace('#/');
 
   const cards = data?.cards || [];
   const current = topics.find(t => t.id === topic) || null;
@@ -55,7 +52,7 @@ export function SimpleFeed({ topics, topic, setTopic, data, loading, error, refr
   const unreadBy = data?.unread_by_topic || {};
   const unreadAll = Object.values(unreadBy).reduce((a, b) => a + b, 0);
   const unreadHere = topic ? unreadBy[topic] || 0 : unreadAll;
-  const open = id => { setTopic(id); setHome(false); };
+  const open = id => { setTopic(id); window.location.hash = `#/s/${encodeURIComponent(id || 'tout')}`; };
 
   const refreshBlock = (
     <>
@@ -66,8 +63,8 @@ export function SimpleFeed({ topics, topic, setTopic, data, loading, error, refr
       {refreshing && progress && <RefreshProgress progress={progress} />}
       {!refreshing && refreshMsg && <p className="mb-4 rounded-2xl bg-surface-2 px-4 py-3 text-[16px] text-ink/90 ring-1 ring-line" role="status">{refreshMsg}</p>}
       {data?.setup && !data.setup.ai_configured && (
-        <a href="#/reglages" className="mb-4 block rounded-2xl bg-accent/10 px-5 py-4 text-[17px] text-ink ring-1 ring-accent/30">
-          Il reste un réglage à faire avant de pouvoir lire les nouvelles. <span className="text-accent underline">Ouvrir les réglages</span>
+        <a href="#/cles" className="mb-4 block rounded-2xl bg-accent/10 px-5 py-4 text-[17px] text-ink ring-1 ring-accent/30">
+          Il reste un réglage à faire avant de pouvoir lire les nouvelles. <span className="text-accent underline">Configurer Radar</span>
         </a>
       )}
     </>
@@ -118,7 +115,7 @@ export function SimpleFeed({ topics, topic, setTopic, data, loading, error, refr
   return (
     <div className="pt-safe pb-safe px-4 animate-fade">
       {multi && (
-        <button onClick={() => setHome(true)} className="mb-3 -ml-1 flex items-center gap-1.5 rounded-full py-1.5 pr-3 text-[18px] text-accent active:opacity-70">
+        <button onClick={setHome} className="mb-3 -ml-1 flex items-center gap-1.5 rounded-full py-1.5 pr-3 text-[18px] text-accent active:opacity-70">
           <IconBack width={24} height={24} /> Mes sujets
         </button>
       )}

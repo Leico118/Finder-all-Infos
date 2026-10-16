@@ -4,7 +4,7 @@ import { cardDate, timeAgo, monthKey, monthLabel } from '../util.js';
 import { useEffect, useRef, useState } from 'react';
 import RefreshProgress from './RefreshProgress.jsx';
 
-export default function Feed({ topics, topic, setTopic, filter, setFilter, data, loading, error, refreshing, refreshMsg, progress, fresh = 0, onRefresh, onOpen, onReadAll }) {
+export default function Feed({ topics, topic, setTopic, filter, setFilter, unreadOnly = false, setUnreadOnly, data, loading, error, refreshing, refreshMsg, progress, fresh = 0, onRefresh, onOpen, onReadAll }) {
   // Cartes arrivées pendant la lecture : si l'utilisateur a fait défiler la liste, un bouton le ramène en haut.
   const [pill, setPill] = useState(0);
   const seen = useRef(0);
@@ -25,8 +25,7 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
   const showRivals = !current ? topics.some(t => t.type === 'product') : current.type === 'product';
   const filters = [
     ['all', 'Tout'],
-    ...(counts.unread > 0 || filter === 'unread' ? [['unread', 'Non lus']] : []),
-    ['leaks', current?.type === 'general' ? 'Non confirmé' : 'Leaks & rumeurs'],
+    ['leaks', current?.type === 'general' ? 'Non confirmé' : 'Leaks'],
     ['official', 'Officiel'],
     ...(showRivals ? [['competitors', 'Concurrents']] : []),
   ];
@@ -51,30 +50,31 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
         </button>
       </header>
 
-      {/* Sujets */}
-      <nav className="no-scrollbar -mx-4 mb-3 flex gap-2 overflow-x-auto px-4" aria-label="Sujets">
+      {/* Sujets : onglets soulignés (façon rubriques de journal), distincts des filtres */}
+      <nav className="no-scrollbar -mx-4 mb-4 flex items-end gap-6 overflow-x-auto border-b border-line px-4" aria-label="Sujets">
         {[{ id: '', short: 'Tous' }, ...topics].map(t => {
           const active = (topic || '') === t.id;
           const n = t.id ? unreadBy[t.id] : totalUnread;
           return (
-            <button key={t.id || 'all'} onClick={() => setTopic(t.id)}
-              className={`relative shrink-0 rounded-2xl px-3.5 py-2 text-[13px] font-medium transition ${
-                active ? 'bg-accent text-bg' : 'bg-surface text-ink/80 ring-1 ring-line active:bg-surface-2'}`}>
+            <button key={t.id || 'all'} onClick={() => setTopic(t.id)} aria-current={active ? 'page' : undefined}
+              className={`relative shrink-0 pb-3 pt-1 text-[15px] font-medium transition ${active ? 'text-ink' : 'text-muted active:text-ink'}`}>
               {t.short || t.name}
-              {n > 0 && <span className={`ml-1.5 rounded-full px-1.5 text-[10px] font-bold ${active ? 'bg-bg/20 text-bg' : 'bg-accent/20 text-accent'}`}>{n}</span>}
+              {n > 0 && <sup className="ml-1 text-[11px] font-bold text-accent">{n}</sup>}
+              {active && <span className="absolute inset-x-0 -bottom-px h-[3px] rounded-full bg-accent" />}
             </button>
           );
         })}
-        <a href="#/reglages/sujets" className="shrink-0 rounded-2xl px-3.5 py-2 text-[13px] font-medium text-accent border border-dashed border-accent/40">+ Sujet</a>
+        <a href="#/reglages/sujets" aria-label="Ajouter un sujet"
+          className="mb-2 grid h-8 w-8 shrink-0 place-items-center rounded-full text-[18px] leading-none text-accent ring-1 ring-accent/40 active:bg-accent/10">+</a>
       </nav>
 
       {data?.setup && !data.setup.ai_configured && (
-        <a href="#/reglages" className="mb-4 block rounded-2xl bg-accent/10 px-4 py-3 text-sm text-ink ring-1 ring-accent/30 animate-rise">
-          <b className="text-accent">Première étape :</b> collez votre clé IA gratuite dans Réglages pour que les articles soient traduits et classés →
+        <a href="#/cles" className="mb-4 block rounded-2xl bg-accent/10 px-4 py-3 text-sm text-ink ring-1 ring-accent/30 animate-rise">
+          <b className="text-accent">Première étape :</b> configurez Radar en quelques minutes pour que les articles soient traduits et classés →
         </a>
       )}
       {data?.setup?.ai_configured && !data.setup.search_configured && (
-        <a href="#/reglages" className="mb-4 block rounded-2xl bg-accent/10 px-4 py-3 text-sm text-ink ring-1 ring-accent/30 animate-rise">
+        <a href="#/cles/tavily" className="mb-4 block rounded-2xl bg-accent/10 px-4 py-3 text-sm text-ink ring-1 ring-accent/30 animate-rise">
           <b className="text-accent">Recommandé :</b> ajoutez la clé de recherche gratuite Tavily pour retrouver aussi les informations des mois passés →
         </a>
       )}
@@ -90,30 +90,32 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
         <div className="mb-4 rounded-2xl bg-surface-2 px-4 py-3 text-sm text-ink/90 ring-1 ring-line animate-rise" role="status">{refreshMsg}</div>
       )}
 
-      <nav className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4" aria-label="Filtres">
+      {/* Filtres : un seul sélecteur compact */}
+      <div className="no-scrollbar mb-3 flex overflow-x-auto rounded-2xl bg-surface p-1 ring-1 ring-line" role="tablist" aria-label="Filtres">
         {filters.map(([id, label]) => {
           const n = id === 'all' ? counts.all : counts[id];
           const active = filter === id;
           return (
-            <button key={id} onClick={() => setFilter(id)}
-              className={`shrink-0 rounded-full px-4 py-1.5 text-[13px] font-medium transition ${
-                active ? 'bg-ink text-bg' : 'bg-surface text-muted ring-1 ring-line active:bg-surface-2'}`}>
-              {id === 'unread' && <span className={`mr-1.5 inline-block h-1.5 w-1.5 -translate-y-px rounded-full ${active ? 'bg-bg' : 'bg-accent'}`} />}
-              {label}{n ? <span className={`ml-1.5 text-xs ${active ? 'text-bg/60' : 'text-faint'}`}>{n}</span> : null}
+            <button key={id} onClick={() => setFilter(id)} role="tab" aria-selected={active}
+              className={`min-w-fit flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-[13px] font-medium transition ${active ? 'bg-ink text-bg' : 'text-muted active:text-ink'}`}>
+              {label}{n ? <span className={`ml-1 text-[11px] ${active ? 'text-bg/60' : 'text-faint'}`}>{n}</span> : null}
             </button>
           );
         })}
-      </nav>
+      </div>
 
-      {counts.unread > 0 && (
-        <div className="mb-3 flex items-center justify-between px-1 text-xs">
-          {filter === 'unread'
-            ? <span className="text-muted">Les cartes lues restent ici jusqu'à ce que vous quittiez ce filtre.</span>
-            : <button onClick={() => { setFilter('unread'); window.scrollTo(0, 0); }} className="flex items-center gap-2 text-accent active:opacity-70">
-                <span className="h-2 w-2 rounded-full bg-accent" />
-                {counts.unread} actualité{counts.unread > 1 ? 's' : ''} non consultée{counts.unread > 1 ? 's' : ''} <span className="underline underline-offset-2">Voir</span>
-              </button>}
-          <button onClick={onReadAll} className="shrink-0 pl-3 text-muted active:text-ink">Tout marquer comme lu</button>
+      {/* Non lus : à part, se combine avec le filtre choisi */}
+      {(counts.unread > 0 || unreadOnly) && (
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <button onClick={() => { setUnreadOnly(!unreadOnly); window.scrollTo(0, 0); }} aria-pressed={unreadOnly}
+            className={`flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold transition active:scale-95 ${
+              unreadOnly ? 'bg-accent text-bg' : 'text-accent ring-1 ring-accent/45'}`}>
+            <span className={`h-2 w-2 rounded-full ${unreadOnly ? 'bg-bg' : 'bg-accent'}`} />
+            {unreadOnly ? 'Non lus uniquement' : 'Non lus'}
+            {counts.unread > 0 && <span className={unreadOnly ? 'text-bg/70' : 'text-accent/70'}>{counts.unread}</span>}
+            {unreadOnly && <span aria-hidden className="ml-0.5">✕</span>}
+          </button>
+          {counts.unread > 0 && <button onClick={onReadAll} className="shrink-0 text-xs text-muted active:text-ink">Tout marquer comme lu</button>}
         </div>
       )}
 
@@ -123,10 +125,10 @@ export default function Feed({ topics, topic, setTopic, filter, setFilter, data,
         <div className="space-y-3">{[0, 1, 2].map(i => <div key={i} className="h-32 animate-pulse rounded-3xl bg-surface" />)}</div>
       )}
 
-      {!loading && !error && !cards.length && filter === 'unread' && (
+      {!loading && !error && !cards.length && unreadOnly && (
         <div className="rounded-3xl bg-surface p-6 text-center ring-1 ring-line">
           <p className="text-sm text-ink">✔ Tout est lu.</p>
-          <button onClick={() => setFilter('all')} className="mt-2 text-xs text-accent underline underline-offset-2">Voir toutes les actualités</button>
+          <button onClick={() => setUnreadOnly(false)} className="mt-2 text-xs text-accent underline underline-offset-2">Voir toutes les actualités</button>
         </div>
       )}
 

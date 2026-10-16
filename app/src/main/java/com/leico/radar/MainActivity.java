@@ -55,8 +55,14 @@ public class MainActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
-        if (web != null && web.canGoBack()) web.goBack();
-        else super.onBackPressed();
+        if (web == null) { super.onBackPressed(); return; }
+        // La page décide où revenir (sujet → accueil, article → liste, réglages → actualités) ; « exit » : quitter.
+        web.evaluateJavascript("(window.radarBack && window.radarBack()) || 'none'", res -> {
+            if ("\"exit\"".equals(res)) moveTaskToBack(true);
+            else if ("\"none\"".equals(res)) {
+                if (web.canGoBack()) web.goBack(); else moveTaskToBack(true);
+            }
+        });
     }
 
     @Override

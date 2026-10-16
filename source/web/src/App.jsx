@@ -4,7 +4,7 @@ import Feed from './components/Feed.jsx';
 import CardDetail from './components/CardDetail.jsx';
 import Specs from './components/Specs.jsx';
 import Settings from './components/Settings.jsx';
-import { SimpleFeed, Welcome, goSimpleHome } from './components/Simple.jsx';
+import { SimpleFeed, Welcome } from './components/Simple.jsx';
 import KeySetup from './components/KeySetup.jsx';
 import { IconNews, IconSpecs, IconSettings } from './components/Icons.jsx';
 
@@ -20,6 +20,8 @@ function parseHash() {
   if (h.startsWith('/fiche')) return { view: 'specs' };
   if (h.startsWith('/cles')) return { view: 'keys', step: h.split('/')[2] || '' };
   if (h.startsWith('/reglages')) return { view: 'settings', topics: h.includes('sujets') };
+  const st = h.match(/^\/s\/([^/]+)/);                     // mode simplifié : nouvelles d'un sujet (« tout » = tous)
+  if (st) return { view: 'feed', stopic: decodeURIComponent(st[1]) };
   return { view: 'feed' };
 }
 
@@ -30,9 +32,11 @@ export default function App() {
   const [topics, setTopics] = useState([]);
   const [topic, setTopicState] = useState(() => store.get('radar-topic') || '');
   const [filter, setFilterState] = useState('all');
-  const unreadSince = useRef(0);                          // vue « Non lus » : début de la consultation
+  const [unreadOnly, setUnreadOnlyState] = useState(false);  // « Non lus » : bouton à part, combiné avec le filtre
+  const unreadSince = useRef(0);                          // début de la consultation des non lus
+  const setUnreadOnly = v => { if (v) unreadSince.current = Date.now(); setUnreadOnlyState(v); };
   const setFilter = f => {
-    if (f === 'unread' && filter !== 'unread') unreadSince.current = Date.now();
+    if (f === 'unread') { setUnreadOnly(true); return; }
     setFilterState(f);
   };
   const [data, setData] = useState(null);
@@ -63,16 +67,16 @@ export default function App() {
 
   // Toujours le sujet et le filtre affichés à l'instant (et non ceux du début d'une actualisation),
   // et seule la réponse la plus récente est affichée : pas de mélange si l'on change de sujet en cours de route.
-  const view = useRef({ filter, topic });
-  view.current = { filter, topic };
+  const view = useRef({ filter, topic, unreadOnly });
+  view.current = { filter, topic, unreadOnly };
   const loadSeq = useRef(0);
   const load = useCallback(async ({ quiet = false } = {}) => {
     const seq = ++loadSeq.current;
-    const { filter: f, topic: t } = view.current;
+    const { filter: f, topic: t, unreadOnly: u } = view.current;
     if (!quiet) setLoading(true);
     try {
-      const d = await api.cards(f, t, f === 'unread' ? unreadSince.current : undefined);
-      if (seq !== loadSeq.current || view.current.filter !== f || view.current.topic !== t) return;   // réponse dépassée
+      const d = await api.cards(f, t, u ? unreadSince.current : undefined, u);
+      if (seq !== loadSeq.current || view.current.filter !== f || view.current.topic !== t || view.current.unreadOnly !== u) return;   // réponse dépassée
       setData(d);
       setError('');
     } catch (e) {
@@ -93,18 +97,18 @@ export default function App() {
   const changeMode = async m => {
     setMode(m);
     store.set('radar-mode', m);
-    if (m === 'simple') { setFilterState('all'); if (route.view === 'specs') window.location.hash = '#/'; }
+    if (m === 'simple') { setFilterState('all'); setUnreadOnlyState(false); if (route.view === 'specs') window.location.hash = '#/'; }
     try { await api.setup({ ui_mode: m }); } catch { /* conservé localement */ }
   };
   const simple = mode === 'simple';
-  useEffect(() => { load(); }, [filter, topic]);
+  useEffect(() => { load(); }, [filter, topic, unreadOnly]);
 
   const setTopic = id => {
     setTopicState(id);
     store.set('radar-topic', id);
     const t = topics.find(x => x.id === id);
     if (filter === 'competitors' && t && t.type !== 'product') setFilter('all');
-    if (filter === 'unread') unreadSince.current = Date.now();
+    if (unreadOnly) unreadSince.current = Date.now();
   };
 
   useEffect(() => {
@@ -125,8 +129,24 @@ export default function App() {
   };
   const back = () => {
     if (navigatedInApp.current && window.history.length > 1) window.history.back();
-    else window.location.hash = '#/';
+    else window.location.replace('#/');
   };
+
+  // Bouton retour d'Android : Radar décide lui-même où revenir (et quand quitter l'application).
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  useEffect(() => {
+    window.radarBack = () => {
+      const r = routeRef.current;
+      if (document.querySelector('[role=dialog]')) { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return 'ok'; }
+      if (r.view === 'card') { back(); return 'ok'; }                                  // article → liste d'où il venait
+      if (r.view === 'keys') { window.location.replace('#/reglages'); return 'ok'; }
+      if (r.view === 'feed' && r.stopic) { window.location.replace('#/'); return 'ok'; }  // sujet (mode simple) → accueil des sujets
+      if (r.view !== 'feed') { window.location.replace('#/'); return 'ok'; }            // Réglages, fiche → actualités
+      return 'exit';                                                                  // accueil : quitter
+    };
+    return () => { window.radarBack = null; };
+  }, []);
 
   const wait = ms => new Promise(r => setTimeout(r, ms));
 
@@ -217,11 +237,11 @@ export default function App() {
   return (
     <div className={`mx-auto min-h-screen max-w-xl ${simple ? 'simple-ui' : ''}`}>
       {route.view === 'feed' && simple && (
-        <SimpleFeed topics={topics} topic={topic} setTopic={setTopic} data={data} loading={loading} error={error}
+        <SimpleFeed topics={topics} topic={topic} setTopic={setTopic} stopic={route.stopic} data={data} loading={loading} error={error}
           refreshing={refreshing} refreshMsg={refreshMsg} progress={progress} onRefresh={() => refresh()} onOpen={id => go(`#/carte/${id}`)} />
       )}
       {route.view === 'feed' && !simple && (
-        <Feed topics={topics} topic={topic} setTopic={setTopic} filter={filter} setFilter={setFilter} data={data} loading={loading}
+        <Feed topics={topics} topic={topic} setTopic={setTopic} filter={filter} setFilter={setFilter} unreadOnly={unreadOnly} setUnreadOnly={setUnreadOnly} data={data} loading={loading}
           error={error} refreshing={refreshing} refreshMsg={refreshMsg} progress={progress} fresh={fresh}
           onRefresh={() => refresh()} onOpen={id => go(`#/carte/${id}`)}
           onReadAll={readAll} />
@@ -242,7 +262,7 @@ export default function App() {
             const active = activeTab === id;
             return (
               <li key={id} className="flex-1">
-                <button onClick={() => { navigatedInApp.current = false; if (simple && id === 'feed') goSimpleHome(); window.location.hash = hash; }}
+                <button onClick={() => { navigatedInApp.current = false; window.location.replace(hash); }}
                   className={`flex w-full flex-col items-center gap-1 py-1 ${simple ? 'text-[15px]' : 'text-[11px]'}`}>
                   <span className={`relative grid place-items-center rounded-full transition ${simple ? 'h-10 w-20' : 'h-8 w-16'} ${active ? 'bg-accent/15 text-accent' : 'text-muted'}`}>
                     <Icon {...(simple ? { width: 28, height: 28 } : {})} />
