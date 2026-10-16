@@ -67,5 +67,14 @@ export const device = {
     bridge().installUpdate(url);
     return true;
   },
+  // Installer Radar chez un proche
+  qr: text => (isNative() && bridge().qrMatrix ? JSON.parse(bridge().qrMatrix(text)) : null),
+  canScan: () => isNative() && !!bridge().scanQr,
+  scanQr: () => new Promise(resolve => {
+    window.__radarScan = json => resolve(JSON.parse(json));
+    bridge().scanQr();
+  }),
+  shareText: text => (isNative() && bridge().shareText ? (bridge().shareText(text), true) : false),
+  clipboard: () => { try { return isNative() && bridge().readClipboard ? bridge().readClipboard() || '' : ''; } catch { return ''; } },
   openUrl: url => (isNative() ? bridge().openUrl(url) : window.open(url, '_blank', 'noopener')),
 };

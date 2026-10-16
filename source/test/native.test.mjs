@@ -12,12 +12,22 @@ window.RadarBridge = {
     log.push(req);
     setTimeout(() => {
       let res;
-      if (req.url.includes('generativelanguage') && globalThis.__offline) res = { error: 'UnknownHostException : Unable to resolve host "generativelanguage.googleapis.com": No address associated with hostname' };
+      if (req.url.includes('generativelanguage') && globalThis.__busy) res = { status: req.url.includes('2.5-flash-lite') ? 404 : 503, url: req.url, headers: {}, body: '{"error":{"code":503,"message":"The model is overloaded"}}' };
+      else if (req.url.includes('generativelanguage') && globalThis.__offline) res = { error: 'UnknownHostException : Unable to resolve host "generativelanguage.googleapis.com": No address associated with hostname' };
       else if (req.url.includes('generativelanguage')) {
         if (globalThis.__deleteDuring) { const id = globalThis.__deleteDuring; globalThis.__deleteDuring = null; b.db.prepare('DELETE FROM topics WHERE id = ?').run(id); }
         if (globalThis.__steal) b.db.prepare(`UPDATE meta SET value='${Date.now()}|appli-ouverte|manual' WHERE key='lock'`).run();
         res = { status: 200, url: req.url, headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok": true}' }] } }] }) };
+      } else if (req.url.includes('api.groq.com') && req.url.endsWith('/models')) {
+        globalThis.__groqCalls = (globalThis.__groqCalls || 0) + 1;
+        res = { status: 200, url: req.url, headers: {}, body: JSON.stringify({ data: [{ id: 'whisper-large-v3' }, { id: 'llama-3.1-8b-instant' }, { id: 'openai/gpt-oss-120b' }] }) };
+      } else if (req.url.includes('api.groq.com')) {
+        globalThis.__groqCalls = (globalThis.__groqCalls || 0) + 1;
+        const bodyG = JSON.parse(req.body);
+        globalThis.__groqModel = bodyG.model; globalThis.__groqUser = bodyG.messages[1].content;
+        res = req.headers.authorization === 'Bearer gsk_BAD' ? { status: 401, url: req.url, headers: {}, body: '{"error":{"message":"Invalid API Key"}}' }
+          : { status: 200, url: req.url, headers: {}, body: JSON.stringify({ choices: [{ message: { content: '{"ok": true}' } }] }) };
       } else if (req.url.includes('api.github.com')) {
         res = { status: 200, url: req.url, headers: {}, body: JSON.stringify({ tag_name: 'v1.0.9', published_at: '2026-10-15T15:00:00Z',
           assets: [{ name: 'Radar-v1.0.9.apk', browser_download_url: 'https://x/v.apk' }, { name: 'Radar.apk', browser_download_url: 'https://github.com/Leico118/Finder-all-Infos/releases/download/v1.0.9/Radar.apk', size: 7000000 }] }) };
@@ -104,6 +114,43 @@ assert((await api.status()).ui_mode === 'simple', 'mode simplifié mémorisé');
 await api.setup({ ui_mode: 'n-importe-quoi' });
 assert((await api.status()).ui_mode === 'simple', 'valeur de mode invalide ignorée');
 await api.setup({ ui_mode: 'full' });
+// Google surchargé (503) : articles gardés en attente, sans compter d'échec, message clair
+b.db.prepare(`INSERT OR REPLACE INTO raw_items (id, topic_id, title_key, url, title, snippet, content, source_id, source_name, lang, kind, published_at, fetched_at, status, attempts) VALUES ('busy1','find-x10-ultra','kb1','https://x/b1','Find X10 Ultra surcharge','s','', 'x','x','en','target',1,0,'pending',0)`).run();
+b.db.prepare("UPDATE meta SET value='0' WHERE key='lock'").run();
+globalThis.__busy = true;
+const t0b = Date.now();
+const rb503 = await api.refresh('auto');
+globalThis.__busy = false;
+const rowB = b.db.prepare("SELECT status, attempts FROM raw_items WHERE id='busy1'").get();
+assert(rowB.status === 'pending' && Number(rowB.attempts) === 0 && /surchargés/.test(rb503.errors.join(' ')) && Date.now() - t0b < 60000,
+  `Google surchargé : article gardé, aucun échec compté (${rowB.status}/${rowB.attempts})`);
+// IA de secours (Groq) : prend le relais quand Google est surchargé
+let badG; try { await api.setup({ backup_key: 'gsk_BAD' }); } catch (e) { badG = e; }
+assert(badG?.status === 400 && /Groq refusée/.test(badG.message), 'clé Groq invalide refusée');
+await api.setup({ backup_key: 'gsk_GOOD123456' });
+assert((await api.status()).ai.backup === true && globalThis.__groqModel === 'openai/gpt-oss-120b', 'clé Groq enregistrée, meilleur modèle choisi automatiquement');
+b.db.prepare(`INSERT OR REPLACE INTO raw_items (id, topic_id, title_key, url, title, snippet, content, source_id, source_name, lang, kind, published_at, fetched_at, status, attempts) VALUES ('bk1','find-x10-ultra','kbk1','https://x/bk1','Find X10 Ultra secours','s','', 'x','x','en','target',1,0,'pending',0)`).run();
+b.db.prepare("UPDATE meta SET value='0' WHERE key='lock'").run();
+globalThis.__busy = true; globalThis.__groqCalls = 0;
+const t0g = Date.now();
+const rg = await api.refresh('auto');
+globalThis.__busy = false;
+const rowG = b.db.prepare("SELECT status FROM raw_items WHERE id='bk1'").get();
+const sumG = (await api.status()).last_summary;
+assert(rowG.status !== 'pending' && globalThis.__groqCalls > 0 && !rg.errors.length && sumG.backup >= 1 && Date.now() - t0g < 30000,
+  `Google surchargé : l'IA de secours a analysé l'article (${rowG.status}, ${sumG.backup} via Groq, ${Math.round((Date.now() - t0g) / 1000)} s)`);
+// Installer Radar chez un proche : code créé sur un téléphone, importé sur un autre
+const sc = await api.shareCode();
+assert(/^RADAR1:[A-Za-z0-9_-]+$/.test(sc.code) && sc.search && sc.backup, 'code de partage créé (clés Gemini, Tavily et Groq)');
+b.db.prepare("DELETE FROM meta WHERE key IN ('cfg_gemini_key','cfg_tavily_key','cfg_groq_key')").run();
+assert(!(await api.status()).ai.configured, 'clés effacées (nouveau téléphone simulé)');
+const imp = await api.importCode(`Code pour configurer Radar :\n${sc.code}\n\nCopie ce message…`);
+const stI = await api.status();
+assert(imp.ai_ok && imp.search_ok && imp.backup_ok && stI.ai.configured && stI.search.configured && stI.ai.backup, 'code importé depuis un message : les trois clés installées');
+let badCode; try { await api.importCode('bonjour'); } catch (e) { badCode = e; }
+assert(badCode?.status === 400 && /pas un code Radar/.test(badCode.message), 'texte sans code refusé avec un message clair');
+let cut; try { await api.importCode(sc.code.slice(0, 20)); } catch (e) { cut = e; }
+assert(cut?.status === 400, 'code tronqué refusé');
 // Mise à jour proposée depuis GitHub
 const up = await api.update();
 assert(up.available && up.latest === '1.0.9' && up.current === '1.0.0' && up.url.endsWith('/v1.0.9/Radar.apk'), 'nouvelle version GitHub détectée avec le bon fichier');

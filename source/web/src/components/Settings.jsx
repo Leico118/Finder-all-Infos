@@ -8,6 +8,7 @@ import { IconChevron } from './Icons.jsx';
 import { formatDateTime, timeAgo } from '../util.js';
 import Topics from './Topics.jsx';
 import { BigButton } from './Simple.jsx';
+import { ShareKeys, ReceiveKeys } from './KeyTransfer.jsx';
 
 const input = 'w-full rounded-2xl bg-surface-2 px-4 py-3 text-sm text-ink ring-1 ring-line outline-none focus:ring-accent/60';
 const Btn = ({ children, className = '', ...p }) => (
@@ -143,7 +144,15 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
 
   const saveAI = async key => { await api.setup({ ai_provider: 'gemini', ai_key: key }); load(); onTopicsChanged?.(); };
   const saveSearch = async key => { await api.setup({ search_key: key }); load(); };
+  const saveBackup = async key => { await api.setup({ backup_key: key }); load(); };
   const [picker, setPicker] = useState(false);
+  const [ready, setReady] = useState(false);                // clés reçues d'un proche
+  const received = () => { setReady(true); load(); onTopicsChanged?.(); };
+  const readyBanner = ready && (
+    <div className={`rounded-3xl bg-emerald-500/10 text-emerald-200 ring-1 ring-emerald-400/25 animate-rise ${simple ? 'p-5 text-[18px]' : 'p-4 text-sm'}`} role="status">
+      ✔ Radar est prêt. {simple ? 'Touchez « Chercher les nouvelles ».' : 'Vous pouvez lancer une actualisation.'}
+    </div>
+  );
   const toggleAuto = async () => { await api.setup({ auto_collect: !status.auto_collect }); load(); };
   const toggleNotify = async () => {
     const on = !status.notify_enabled;
@@ -163,12 +172,16 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
         </header>
         {error && <div className="mb-4 rounded-3xl bg-surface p-5 text-[16px] text-red-300 ring-1 ring-red-400/20">{error}</div>}
         <div className="space-y-4">
+          {readyBanner}
           {isNative() && <AppUpdate version={dev?.version} simple />}
 
           {needsSetup && (
             <Block title="À faire une seule fois" highlight>
-              <p className="mb-3 text-[16px] leading-relaxed text-ink/90">Demandez à la personne qui vous a installé Radar de coller ici la clé « Gemini ».</p>
-              <KeyForm label="Google Gemini" placeholder="AIza…" id="gemini-key" configured={false} onSave={saveAI} />
+              <ReceiveKeys simple onDone={received} />
+              <details className="mt-4">
+                <summary className="cursor-pointer text-[15px] text-faint">J'ai ma propre clé Gemini</summary>
+                <div className="mt-3"><KeyForm label="Google Gemini" placeholder="AIza…" id="gemini-key" configured={false} onSave={saveAI} /></div>
+              </details>
             </Block>
           )}
 
@@ -194,7 +207,6 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
           )}
 
           <ModeBlock simple onModeChange={onModeChange} />
-          {dev?.version && <p className="px-2 pb-2 text-center text-[14px] text-faint">Radar {dev.version}</p>}
         </div>
       </div>
     );
@@ -210,10 +222,17 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
       {error && <div className="mb-3 rounded-3xl bg-surface p-5 text-sm text-red-300 ring-1 ring-red-400/20">{error}</div>}
 
       <div className="space-y-3">
+        {readyBanner}
         {isNative() && <AppUpdate version={dev?.version} />}
 
         {status && (
           <Block title="Intelligence artificielle" highlight={needsSetup}>
+            {needsSetup && (
+              <div className="mb-4 border-b border-line pb-4">
+                <ReceiveKeys onDone={received} />
+                <p className="mt-3 text-xs text-faint">Ou créez votre propre clé :</p>
+              </div>
+            )}
             <KeyForm label="Google Gemini" placeholder="AIza…" id="gemini-key" configured={status.ai.configured} onSave={saveAI}>
               <p className="text-xs leading-relaxed text-muted">Indispensable : traduit, classe et regroupe les articles. Gratuit.</p>
               <ol className="list-decimal space-y-0.5 pl-4 text-xs leading-relaxed text-muted">
@@ -237,6 +256,23 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
           </Block>
         )}
 
+        {status && (
+          <Block title="IA de secours (facultatif)">
+            <KeyForm label="Groq" placeholder="gsk_…" id="groq-key" configured={status.ai.backup} onSave={saveBackup}>
+              <p className="text-xs leading-relaxed text-muted">
+                Prend le relais quand les serveurs de Google sont surchargés : les articles sont analysés quand même au lieu d'attendre. Gratuit.
+              </p>
+              <ol className="list-decimal space-y-0.5 pl-4 text-xs leading-relaxed text-muted">
+                <li>Ouvrez <Link href="https://console.groq.com/keys">console.groq.com/keys</Link> et connectez-vous (compte Google possible).</li>
+                <li>Touchez « Create API Key », donnez-lui un nom (ex. Radar), puis copiez la clé (elle commence par « gsk_ »).</li>
+                <li>Collez-la ici.</li>
+              </ol>
+            </KeyForm>
+          </Block>
+        )}
+
+        {isNative() && status?.ai.configured && <ShareKeys />}
+
         <Topics onAdded={() => { load(); onTopicsChanged?.(); }} autoFocus={focusTopics} />
 
         <Block title="Synchronisation">
@@ -246,7 +282,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
             <p className="mt-3 text-xs leading-relaxed text-muted">
               Dernier passage ({s.mode === 'background' ? 'automatique' : 'manuel'}) :
               {' '}{s.topics} sujet{s.topics > 1 ? 's' : ''} collecté{s.topics > 1 ? 's' : ''}, {s.newItems} nouvel{s.newItems > 1 ? 's' : ''} article{s.newItems > 1 ? 's' : ''},
-              {' '}{s.analyzed} analysé{s.analyzed > 1 ? 's' : ''}, {s.created} carte{s.created > 1 ? 's' : ''} créée{s.created > 1 ? 's' : ''}.
+              {' '}{s.analyzed} analysé{s.analyzed > 1 ? 's' : ''}{s.backup ? ` (dont ${s.backup} par l'IA de secours)` : ''}, {s.created} carte{s.created > 1 ? 's' : ''} créée{s.created > 1 ? 's' : ''}.
             </p>
           )}
           {status && <p className="mt-1 text-xs text-muted">Articles en attente d'analyse : {status.pending}</p>}

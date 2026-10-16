@@ -3,7 +3,7 @@ import { parseFeed, extractArticle, normalizeUrl, titleKey, hash } from './rss.j
 import { fetchText, sleep } from './net.js';
 import { SITE_FEEDS, topicFeeds } from './sources.js';
 import { topicMatchers } from './topics.js';
-import { callAI, aiConfigured, analysisSystem, analysisUser, specKeys } from './ai.js';
+import { callAI, aiConfigured, analysisSystem, analysisUser, specKeys, backupActive, backupConfigured, lastAIProvider } from './ai.js';
 import { searchConfigured, webSearch, pickQueries, DAILY_BUDGET } from './websearch.js';
 
 const DAY = 86400000;
@@ -250,18 +250,23 @@ async function analyze(env, topicsById, now, stats, stillOwner = async () => tru
     await env.DB.prepare(`UPDATE raw_items SET status = 'ignored', reason = 'sujet supprimé' WHERE topic_id = ?`).bind(first.topic_id).run();
     return 1;
   }
+  // IA de secours (limites gratuites plus serrées) : lots plus petits et moins de contexte.
+  const backup = backupActive(env);
   const { results: pending } = await env.DB.prepare(
     `SELECT * FROM raw_items WHERE status = 'pending' AND content IS NOT NULL AND topic_id = ?
-     ORDER BY (kind = 'target') DESC, published_at DESC LIMIT ${size}`).bind(topic.id).all();
+     ORDER BY (kind = 'target') DESC, published_at DESC LIMIT ${backup ? Math.min(size, 3) : size}`).bind(topic.id).all();
   const { results: cards } = await env.DB.prepare(
-    'SELECT id, category, reliability, title, summary, competitor_model FROM cards WHERE topic_id = ? ORDER BY latest_at DESC LIMIT 80')
+    `SELECT id, category, reliability, title, summary, competitor_model FROM cards WHERE topic_id = ? ORDER BY latest_at DESC LIMIT ${backup ? 30 : 80}`)
     .bind(topic.id).all();
   const { results: specs } = await env.DB.prepare('SELECT key, value, reliability FROM specs WHERE topic_id = ?').bind(topic.id).all();
   let out;
   try {
-    out = await callAI(env, analysisSystem(topic), analysisUser(topic, { items: pending, cards: cards || [], specs: specs || [] }));
+    out = await callAI(env, analysisSystem(topic), analysisUser(topic, { items: pending, cards: cards || [], specs: specs || [] }), { fallback: false });
+    if (lastAIProvider() === 'groq') stats.backup = (stats.backup || 0) + pending.length;
   } catch (e) {
+    if (e.busy && !e.fromBackup && backupConfigured(env)) return -2;      // Gemini surchargé : nouvel essai avec l'IA de secours
     if (isNetworkError(e.message)) throw new Error(`${NETWORK_MSG} [détail : ${str(e.message, 160)}]`);  // rien n'est perdu
+    if (e.busy) throw e;                                                   // Google surchargé : pas compté comme un échec
     await env.DB.batch(pending.map(p => env.DB.prepare(
       `UPDATE raw_items SET attempts = attempts + 1, status = CASE WHEN attempts + 1 >= 6 THEN 'error' ELSE status END, reason = ? WHERE id = ?`
     ).bind(str(e.message, 300), p.id)));
@@ -531,6 +536,7 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000, onProgress = 
           stats.errors.push(`Analyse IA : ${e.message}`);
           return;
         }
+        if (n === -2) continue;                                       // bascule vers l'IA de secours
         if (n < 0) { lost = true; return; }
         if (n > 0) {
           first = false;
@@ -566,7 +572,7 @@ export async function tick(env, { mode = 'auto', budgetMs = 75000, onProgress = 
     await setMeta(env, 'last_summary', JSON.stringify({
       at: now, mode, topics: stats.collected, sources: stats.sources.length, sourceErrors: srcErr.length,
       newItems: stats.sources.reduce((n, s) => n + (s.inserted || 0), 0),
-      analyzed: stats.analyzed, created: stats.created, updated: stats.updated, ignored: stats.ignored,
+      analyzed: stats.analyzed, created: stats.created, updated: stats.updated, ignored: stats.ignored, backup: stats.backup || 0,
     }));
   } finally {
     if (await ownsLock(env, token)) await setMeta(env, 'lock', '0');

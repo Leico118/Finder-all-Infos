@@ -15,51 +15,68 @@ function extractJson(text) {
 
 // Modèles rapides d'abord (Flash-Lite répond en quelques secondes), puis repli.
 let preferred = null;
+const retired = new Set();                     // modèles qui répondent 404 (retirés par Google)
+export const BUSY_MSG = 'les serveurs de Google sont momentanément surchargés. Rien n\'est perdu : les articles restent en attente et seront analysés à la prochaine actualisation.';
 const MODELS = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-2.5-flash-lite'];
 
 const NET_ERR = /UnknownHost|Unable to resolve|No address associated|ConnectException|SocketException|NoRouteToHost|SSLException|EOFException|Network is unreachable|connexion/i;
 
 async function callGemini(env, system, user) {
-  const models = env.GEMINI_MODEL ? [env.GEMINI_MODEL] : (preferred ? [preferred, ...MODELS.filter(m => m !== preferred)] : MODELS);
+  const all = env.GEMINI_MODEL ? [env.GEMINI_MODEL] : (preferred ? [preferred, ...MODELS.filter(m => m !== preferred)] : MODELS);
+  const models = all.filter(m => !retired.has(m));
   const ms = env.aiTimeout || 60000;
   const errors = [], netErrors = [];
-  for (const model of models) {
-    try {
-      const res = await http(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: system }] },
-          contents: [{ role: 'user', parts: [{ text: user }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 16000 },
-        }),
-        timeout: ms,
-      });
-      const body = await res.text();
-      if (!res.ok) {
-        const err = new Error(`Gemini ${res.status} : ${body.slice(0, 200)}`);
-        err.code = res.status;
-        throw err;
+  // Deux tours : si Google est surchargé (503/429/500), on attend un peu et on réessaie avant d'abandonner.
+  for (let round = 0; round < 2; round++) {
+    let busy = 0;
+    errors.length = 0;
+    for (const model of models) {
+      if (retired.has(model)) continue;
+      try {
+        const res = await http(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: system }] },
+            contents: [{ role: 'user', parts: [{ text: user }] }],
+            generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 16000 },
+          }),
+          timeout: ms,
+        });
+        const body = await res.text();
+        if (!res.ok) {
+          const err = new Error(`Gemini ${res.status} : ${body.slice(0, 200)}`);
+          err.code = res.status;
+          throw err;
+        }
+        const data = JSON.parse(body);
+        const out = extractJson((data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join(''));
+        preferred = model;
+        return out;
+      } catch (e) {
+        const slow = e.name === 'AbortError' || e.name === 'TimeoutError' || /délai|timeout/i.test(e.message);
+        if (e.code === 400 || e.code === 401 || e.code === 403) throw new Error(`Clé Gemini refusée (${e.code}) : vérifiez-la dans Réglages.`);
+        if (!e.code && NET_ERR.test(e.message)) {                       // coupure passagère : modèle suivant après une pause
+          netErrors.push(e.message);
+          if (netErrors.length >= 3) throw new Error(netErrors[netErrors.length - 1]);
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+        if (e.code === 404) { retired.add(model); continue; }           // modèle retiré par Google : on n'insiste plus
+        if (!slow && ![429, 500, 503].includes(e.code) && !(e instanceof SyntaxError) && !/JSON/.test(e.message)) throw e;
+        if (slow || [429, 500, 503].includes(e.code)) busy++;
+        errors.push(`${model} : ${slow ? 'trop lent' : e.code ? `erreur ${e.code}` : 'réponse illisible'}`);
       }
-      const data = JSON.parse(body);
-      const out = extractJson((data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join(''));
-      preferred = model;
-      return out;
-    } catch (e) {
-      const slow = e.name === 'AbortError' || e.name === 'TimeoutError' || /délai|timeout/i.test(e.message);
-      if (e.code === 400 || e.code === 401 || e.code === 403) throw new Error(`Clé Gemini refusée (${e.code}) : vérifiez-la dans Réglages.`);
-      if (!e.code && NET_ERR.test(e.message)) {                       // coupure passagère : modèle suivant après une pause
-        netErrors.push(e.message);
-        if (netErrors.length >= 3) throw new Error(netErrors[netErrors.length - 1]);
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
-      }
-      if (!slow && ![404, 429, 500, 503].includes(e.code) && !(e instanceof SyntaxError) && !/JSON/.test(e.message)) throw e;
-      errors.push(`${model} : ${slow ? 'trop lent' : e.code ? `erreur ${e.code}` : 'réponse illisible'}`);
     }
+    if (!busy || round === 1 || backupConfigured(env)) break;      // IA de secours disponible : inutile d'attendre
+    await new Promise(r => setTimeout(r, env.aiRetryDelay ?? 8000));
   }
   if (netErrors.length && !errors.length) throw new Error(netErrors[netErrors.length - 1]);
-  throw new Error(`aucun modèle Gemini n'a répondu (${errors.join(' ; ')})`);
+  if (errors.length && errors.every(x => /erreur (429|500|503)|trop lent/.test(x))) {
+    // Surcharge passagère chez Google : rien n'est perdu, les articles restent en attente.
+    throw Object.assign(new Error(BUSY_MSG), { busy: true });
+  }
+  throw new Error(`aucun modèle Gemini n'a répondu (${errors.join(' ; ') || 'aucun modèle disponible'})`);
 }
 
 async function callAnthropic(env, system, user) {
@@ -74,8 +91,76 @@ async function callAnthropic(env, system, user) {
   return extractJson((JSON.parse(body).content || []).map(c => c.text || '').join(''));
 }
 
-export function callAI(env, system, user) {
-  return (env.AI_PROVIDER || 'gemini') === 'anthropic' ? callAnthropic(env, system, user) : callGemini(env, system, user);
+// ---------- IA de secours : Groq (gratuit), utilisée quand Gemini est surchargé ----------
+let geminiBusyUntil = 0;
+let groqModel = null;
+let lastProvider = 'gemini';
+const GROQ = 'https://api.groq.com/openai/v1';
+const GROQ_PREF = [/gpt-oss-120b/, /llama-3\.3-70b/, /llama-4-maverick/, /qwen3-32b/, /gpt-oss-20b/, /kimi-k2/, /llama-4-scout/, /llama/];
+
+export const backupConfigured = env => !!env.GROQ_API_KEY;
+export const backupActive = env => backupConfigured(env) && Date.now() < geminiBusyUntil;
+export const lastAIProvider = () => lastProvider;
+
+async function pickGroqModel(env, exclude = []) {
+  if (groqModel && !exclude.includes(groqModel)) return groqModel;
+  const res = await http(`${GROQ}/models`, { headers: { authorization: `Bearer ${env.GROQ_API_KEY}` }, timeout: 20000 });
+  if (res.status === 401 || res.status === 403) throw new Error(`Clé Groq refusée (${res.status}) : vérifiez-la dans Réglages.`);
+  if (!res.ok) throw Object.assign(new Error(`Groq indisponible (${res.status})`), { busy: true, fromBackup: true });
+  const ids = (JSON.parse(await res.text()).data || []).filter(m => m.active !== false).map(m => m.id)
+    .filter(id => !/whisper|guard|tts|embed|vision|compound/i.test(id) && !exclude.includes(id));
+  for (const re of GROQ_PREF) { const id = ids.find(x => re.test(x)); if (id) return (groqModel = id); }
+  if (ids[0]) return (groqModel = ids[0]);
+  throw new Error('Groq ne propose aucun modèle utilisable');
+}
+
+export async function callGroq(env, system, user, { json = true } = {}) {
+  const tried = [];
+  for (let i = 0; i < 3; i++) {
+    const model = await pickGroqModel(env, tried);
+    const res = await http(`${GROQ}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${env.GROQ_API_KEY}` },
+      body: JSON.stringify({
+        model, temperature: 0.2, max_tokens: 6000,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        ...(json ? { response_format: { type: 'json_object' } } : {}),
+      }),
+      timeout: env.aiTimeout || 60000,
+    });
+    const body = await res.text();
+    if (res.ok) {
+      const text = JSON.parse(body).choices?.[0]?.message?.content || '';
+      lastProvider = 'groq';
+      return extractJson(text);
+    }
+    if (res.status === 401 || res.status === 403) throw new Error(`Clé Groq refusée (${res.status}) : vérifiez-la dans Réglages.`);
+    if (res.status === 404 || /decommission|not.found|does not exist/i.test(body)) { tried.push(model); groqModel = null; continue; }
+    if (res.status === 400 && json && /response_format|json/i.test(body)) return callGroq(env, system, user, { json: false });
+    if ([413, 429, 500, 502, 503].includes(res.status)) {
+      throw Object.assign(new Error(res.status === 413 ? 'demande trop longue pour l\'IA de secours' : BUSY_MSG), { busy: true, fromBackup: true });
+    }
+    throw new Error(`Groq ${res.status} : ${body.slice(0, 160)}`);
+  }
+  throw new Error('aucun modèle Groq n\'a répondu');
+}
+
+// opts.fallback : passer à Groq tout de suite si Gemini est surchargé (sinon l'appelant décide, cf. analyse).
+// opts.primaryOnly : vérification d'une clé Gemini (jamais de relais).
+export async function callAI(env, system, user, { fallback = true, primaryOnly = false } = {}) {
+  if ((env.AI_PROVIDER || 'gemini') === 'anthropic') { lastProvider = 'anthropic'; return callAnthropic(env, system, user); }
+  if (primaryOnly) return callGemini(env, system, user);
+  if (backupActive(env)) return callGroq(env, system, user);
+  try {
+    const out = await callGemini(env, system, user);
+    lastProvider = 'gemini';
+    return out;
+  } catch (e) {
+    if (!e.busy || !backupConfigured(env)) throw e;
+    geminiBusyUntil = Date.now() + 10 * 60000;                       // Gemini laissé au repos 10 minutes
+    if (!fallback) throw e;
+    return callGroq(env, system, user);
+  }
 }
 
 // ---------- Consignes d'analyse adaptées au sujet ----------

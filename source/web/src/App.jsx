@@ -4,7 +4,7 @@ import Feed from './components/Feed.jsx';
 import CardDetail from './components/CardDetail.jsx';
 import Specs from './components/Specs.jsx';
 import Settings from './components/Settings.jsx';
-import { SimpleFeed, Welcome } from './components/Simple.jsx';
+import { SimpleFeed, Welcome, goSimpleHome } from './components/Simple.jsx';
 import { IconNews, IconSpecs, IconSettings } from './components/Icons.jsx';
 
 const store = {
@@ -237,7 +237,7 @@ export default function App() {
             const active = activeTab === id;
             return (
               <li key={id} className="flex-1">
-                <button onClick={() => { navigatedInApp.current = false; window.location.hash = hash; }}
+                <button onClick={() => { navigatedInApp.current = false; if (simple && id === 'feed') goSimpleHome(); window.location.hash = hash; }}
                   className={`flex w-full flex-col items-center gap-1 py-1 ${simple ? 'text-[15px]' : 'text-[11px]'}`}>
                   <span className={`relative grid place-items-center rounded-full transition ${simple ? 'h-10 w-20' : 'h-8 w-16'} ${active ? 'bg-accent/15 text-accent' : 'text-muted'}`}>
                     <Icon {...(simple ? { width: 28, height: 28 } : {})} />

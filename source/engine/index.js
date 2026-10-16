@@ -2,7 +2,7 @@
 import { SCHEMA, SCHEMA_VERSION } from './schema.js';
 import { setFetch, http } from './net.js';
 import { tick, getMeta, setMeta, dayStart, loadTopics, purgeOrphans } from './pipeline.js';
-import { aiConfigured, callAI } from './ai.js';
+import { aiConfigured, callAI, callGroq, backupConfigured } from './ai.js';
 import { searchConfigured, tavily } from './websearch.js';
 import { DEFAULT_TOPIC, MAX_TOPICS, TOPIC_SYSTEM, topicUserPrompt, sanitizeConfig } from './topics.js';
 import { SITE_FEEDS, topicFeeds } from './sources.js';
@@ -24,7 +24,7 @@ const UPDATE_REPO = 'Leico118/Finder-all-Infos';
 // platform : { DB, fetch, notify, info } fournis par Android (ou par les tests).
 export function createEngine(platform) {
   if (platform.fetch) setFetch(platform.fetch);
-  const base = { DB: platform.DB, DAILY_HOUR: platform.dailyHour ?? 8, GDELT_DELAY: platform.gdeltDelay };
+  const base = { DB: platform.DB, DAILY_HOUR: platform.dailyHour ?? 8, GDELT_DELAY: platform.gdeltDelay, aiRetryDelay: platform.aiRetryDelay };
   let ready = null;
 
   async function env() {
@@ -38,6 +38,7 @@ export function createEngine(platform) {
       GEMINI_API_KEY: c.gemini_key || '',
       ANTHROPIC_API_KEY: c.anthropic_key || '',
       TAVILY_API_KEY: c.tavily_key || '',
+      GROQ_API_KEY: c.groq_key || '',
       AUTO_COLLECT: c.auto_collect !== '0',
       UI_MODE: c.ui_mode === 'simple' || c.ui_mode === 'full' ? c.ui_mode : '',
       DAILY_HOUR: /^\d+$/.test(c.daily_hour || '') && Number(c.daily_hour) < 24 ? Number(c.daily_hour) : base.DAILY_HOUR,
@@ -175,7 +176,7 @@ export function createEngine(platform) {
       last_summary: parse(await getMeta(E, 'last_summary')),
       legacy: parse(await getMeta(E, 'legacy_import')),
       pending,
-      ai: { configured: aiConfigured(E), provider: E.AI_PROVIDER },
+      ai: { configured: aiConfigured(E), provider: E.AI_PROVIDER, backup: backupConfigured(E) },
       search: { configured: searchConfigured(E) },
       notify_enabled: (await getMeta(E, 'notify_enabled')) !== '0',
       auto_collect: E.AUTO_COLLECT,
@@ -285,12 +286,21 @@ export function createEngine(platform) {
       await setCfg('tavily_key', skey);
       result.search_ok = true;
     }
+    const bkey = String(body?.backup_key || '').trim();
+    if (bkey) {
+      try {
+        const out = await callGroq({ ...E, GROQ_API_KEY: bkey, aiTimeout: 30000 }, 'Tu réponds uniquement en JSON.', 'Réponds exactement {"ok": true}');
+        if (!out || out.ok !== true) throw new Error('réponse inattendue');
+      } catch (e) { return fail(`Clé Groq refusée : ${e.message.slice(0, 200)}`); }
+      await setCfg('groq_key', bkey);
+      result.backup_ok = true;
+    }
     const key = String(body?.ai_key || '').trim();
     if (key) {
       const p = body?.ai_provider === 'anthropic' ? 'anthropic' : 'gemini';
       const testEnv = { ...E, AI_PROVIDER: p, aiTimeout: 30000, [p === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'GEMINI_API_KEY']: key };
       try {
-        const out = await callAI(testEnv, 'Tu réponds uniquement en JSON.', 'Réponds exactement {"ok": true}');
+        const out = await callAI(testEnv, 'Tu réponds uniquement en JSON.', 'Réponds exactement {"ok": true}', { primaryOnly: true });
         if (!out || out.ok !== true) throw new Error('réponse inattendue');
       } catch (e) { return fail(`Clé refusée par ${p === 'anthropic' ? 'Anthropic' : 'Google'} : ${e.message.slice(0, 200)}`); }
       await setCfg(p === 'anthropic' ? 'anthropic_key' : 'gemini_key', key);
@@ -312,6 +322,29 @@ export function createEngine(platform) {
     const budget = mode === 'background' ? 8 * 60000 : 75000;
     const r = await tick(E, { mode, budgetMs: Number(q.get('budget')) || budget, onProgress: ctx.onProgress });
     return ok(r, r.skipped ? 409 : 200);
+  }
+
+  // ---------- Installer Radar chez un proche : les clés passent d'un téléphone à l'autre ----------
+  const b64 = str => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64 = s => decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))));
+  async function shareCode(E) {
+    if (!aiConfigured(E) || E.AI_PROVIDER !== 'gemini') return fail('Ajoutez d\'abord votre clé Gemini.');
+    const code = `RADAR1:${b64(JSON.stringify({ g: E.GEMINI_API_KEY, ...(E.TAVILY_API_KEY ? { t: E.TAVILY_API_KEY } : {}), ...(E.GROQ_API_KEY ? { q: E.GROQ_API_KEY } : {}) }))}`;
+    return ok({ code, search: !!E.TAVILY_API_KEY, backup: !!E.GROQ_API_KEY });
+  }
+  async function importCode(E, body) {
+    const m = String(body?.code || '').match(/RADAR1:([A-Za-z0-9_-]{10,})/);
+    if (!m) return fail('Ce n\'est pas un code Radar. Sur l\'autre téléphone : Réglages → Installer Radar chez un proche.');
+    let data;
+    try { data = JSON.parse(unb64(m[1])); } catch { return fail('Code Radar incomplet : recopiez-le en entier.'); }
+    if (!data?.g) return fail('Code Radar incomplet : recopiez-le en entier.');
+    const r = await setup(E, { ai_provider: 'gemini', ai_key: data.g });             // clé Gemini vérifiée
+    if (r.status >= 400) return r;
+    let search_ok = false;
+    if (data.t) { const r2 = await setup(E, { search_key: data.t }); search_ok = r2.status < 400; }   // Tavily : facultatif
+    let backup_ok = false;
+    if (data.q) { const r3 = await setup(E, { backup_key: data.q }); backup_ok = r3.status < 400; }   // Groq : facultatif
+    return ok({ ok: true, ai_ok: true, search_ok, backup_ok });
   }
 
   // ---------- Mise à jour de l'application (dernière version publiée sur GitHub) ----------
@@ -364,6 +397,8 @@ export function createEngine(platform) {
       if (method === 'POST' && p === '/api/setup') return await setup(E, body);
       if (method === 'POST' && p === '/api/refresh') return await refresh(E, q, ctx);
       if (method === 'GET' && p === '/api/update') return await checkUpdate();
+      if (method === 'GET' && p === '/api/share-code') return await shareCode(E);
+      if (method === 'POST' && p === '/api/import-code') return await importCode(await env(), body);
       return fail('Route inconnue', 404);
     } catch (e) {
       return fail(e.message || String(e), 500);

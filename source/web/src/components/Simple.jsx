@@ -1,5 +1,5 @@
 // Mode simplifié : gros caractères, l'essentiel seulement (pensé pour une utilisation sans effort).
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { IconRefresh, IconBack, IconExternal } from './Icons.jsx';
 import RefreshProgress from './RefreshProgress.jsx';
 import { monthKey, monthLabel, plainDate, timeAgo } from '../util.js';
@@ -29,56 +29,114 @@ export function BigButton({ children, className = '', ...p }) {
 }
 
 // ---------- Liste des actualités ----------
+// Avec plusieurs sujets, l'écran d'accueil présente un grand bouton par sujet ; on entre dans un sujet,
+// puis « Mes sujets » ramène à l'accueil. Le choix est conservé en revenant d'une actualité.
+let simpleHome = true;
+export function goSimpleHome() { simpleHome = true; window.dispatchEvent(new Event('radar-simple-home')); }
+
+function nouvelles(n) {
+  return n > 0 ? `${n} nouvelle${n > 1 ? 's' : ''} à lire` : 'Rien de nouveau';
+}
+
 export function SimpleFeed({ topics, topic, setTopic, data, loading, error, refreshing, refreshMsg, progress, onRefresh, onOpen }) {
+  const multi = topics.length > 1;
+  const [home, setHomeState] = useState(multi && simpleHome);
+  const setHome = v => { simpleHome = v; setHomeState(v); window.scrollTo(0, 0); };
+  useEffect(() => { if (!multi && home) setHomeState(false); }, [multi]);
+  useEffect(() => {                                       // onglet « Actualités » touché : retour à l'accueil des sujets
+    const onHome = () => multi && setHome(true);
+    window.addEventListener('radar-simple-home', onHome);
+    return () => window.removeEventListener('radar-simple-home', onHome);
+  }, [multi]);
+
   const cards = data?.cards || [];
   const current = topics.find(t => t.id === topic) || null;
   const byId = Object.fromEntries(topics.map(t => [t.id, t]));
-  const unread = Object.values(data?.unread_by_topic || {}).reduce((a, b) => a + b, 0);
+  const unreadBy = data?.unread_by_topic || {};
+  const unreadAll = Object.values(unreadBy).reduce((a, b) => a + b, 0);
+  const unreadHere = topic ? unreadBy[topic] || 0 : unreadAll;
+  const open = id => { setTopic(id); setHome(false); };
 
-  return (
-    <div className="pt-safe pb-safe px-4 animate-fade">
-      <header className="mb-4">
-        <h1 className="text-[30px] font-semibold leading-tight text-ink">{current ? current.short || current.name : 'Actualités'}</h1>
-        <p className="mt-1 text-[16px] text-muted">
-          {unread > 0 ? <span className="text-accent">{unread} nouvelle{unread > 1 ? 's' : ''} à lire</span> : 'Tout est lu'}
-          {' · '}mis à jour {timeAgo(data?.last_sync)}
-        </p>
-      </header>
-
+  const refreshBlock = (
+    <>
       <BigButton onClick={onRefresh} disabled={refreshing} className="mb-4 bg-ink text-bg">
         <IconRefresh width={26} height={26} className={refreshing ? 'animate-spin-slow' : ''} />
         {refreshing ? 'Recherche en cours…' : 'Chercher les nouvelles'}
       </BigButton>
-
       {refreshing && progress && <RefreshProgress progress={progress} />}
       {!refreshing && refreshMsg && <p className="mb-4 rounded-2xl bg-surface-2 px-4 py-3 text-[16px] text-ink/90 ring-1 ring-line" role="status">{refreshMsg}</p>}
-
-      {topics.length > 1 && (
-        <nav className="no-scrollbar -mx-4 mb-5 flex gap-2.5 overflow-x-auto px-4" aria-label="Sujets">
-          {[{ id: '', short: 'Tout' }, ...topics].map(t => {
-            const active = (topic || '') === t.id;
-            return (
-              <button key={t.id || 'all'} onClick={() => setTopic(t.id)}
-                className={`shrink-0 rounded-2xl px-5 py-3 text-[17px] font-medium transition ${active ? 'bg-accent text-bg' : 'bg-surface text-ink/85 ring-1 ring-line'}`}>
-                {t.short || t.name}
-              </button>
-            );
-          })}
-        </nav>
-      )}
-
       {data?.setup && !data.setup.ai_configured && (
         <a href="#/reglages" className="mb-4 block rounded-2xl bg-accent/10 px-5 py-4 text-[17px] text-ink ring-1 ring-accent/30">
           Il reste un réglage à faire avant de pouvoir lire les nouvelles. <span className="text-accent underline">Ouvrir les réglages</span>
         </a>
       )}
+    </>
+  );
+
+  // ---- Accueil : un grand bouton par sujet ----
+  if (home && multi) {
+    return (
+      <div className="pt-safe pb-safe px-4 animate-fade">
+        <header className="mb-4">
+          <h1 className="text-[30px] font-semibold leading-tight text-ink">Mes sujets</h1>
+          <p className="mt-1 text-[16px] text-muted">Touchez un sujet pour lire ses nouvelles.</p>
+        </header>
+        {refreshBlock}
+        <ul className="space-y-3">
+          {topics.map(t => {
+            const n = unreadBy[t.id] || 0;
+            return (
+              <li key={t.id}>
+                <button onClick={() => open(t.id)}
+                  className={`flex w-full items-center gap-4 rounded-3xl p-5 text-left ring-1 transition active:scale-[0.99] ${n ? 'bg-surface ring-accent/40' : 'bg-surface/70 ring-line'}`}>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[21px] font-semibold leading-snug text-ink">{t.name}</span>
+                    <span className={`mt-1 block text-[17px] ${n ? 'font-medium text-accent' : 'text-muted'}`}>{nouvelles(n)}</span>
+                  </span>
+                  {n > 0 && <span className="grid h-11 min-w-11 shrink-0 place-items-center rounded-full bg-accent px-2 text-[19px] font-bold text-bg">{n > 99 ? '99+' : n}</span>}
+                  <span className="shrink-0 text-[28px] leading-none text-faint" aria-hidden>›</span>
+                </button>
+              </li>
+            );
+          })}
+          <li>
+            <button onClick={() => open('')}
+              className="flex w-full items-center justify-between gap-4 rounded-3xl border border-dashed border-line p-5 text-left active:scale-[0.99]">
+              <span>
+                <span className="block text-[19px] font-medium text-ink/90">Toutes les nouvelles</span>
+                <span className="mt-1 block text-[16px] text-muted">Tous les sujets mélangés, des plus récentes aux plus anciennes</span>
+              </span>
+              <span className="text-[28px] leading-none text-faint" aria-hidden>›</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+    );
+  }
+
+  // ---- Nouvelles d'un sujet (ou de tous) ----
+  return (
+    <div className="pt-safe pb-safe px-4 animate-fade">
+      {multi && (
+        <button onClick={() => setHome(true)} className="mb-3 -ml-1 flex items-center gap-1.5 rounded-full py-1.5 pr-3 text-[18px] text-accent active:opacity-70">
+          <IconBack width={24} height={24} /> Mes sujets
+        </button>
+      )}
+      <header className="mb-4">
+        <h1 className="text-[30px] font-semibold leading-tight text-ink">{current ? current.name : (multi ? 'Toutes les nouvelles' : 'Actualités')}</h1>
+        <p className="mt-1 text-[16px] text-muted">
+          {unreadHere > 0 ? <span className="text-accent">{nouvelles(unreadHere)}</span> : 'Tout est lu'}
+          {' · '}mis à jour {timeAgo(data?.last_sync)}
+        </p>
+      </header>
+      {refreshBlock}
 
       {error && !cards.length && <div className="rounded-3xl bg-surface p-5 text-[16px] text-red-300 ring-1 ring-red-400/20">{error}</div>}
       {loading && !cards.length && !error && <div className="space-y-4">{[0, 1].map(i => <div key={i} className="h-40 animate-pulse rounded-3xl bg-surface" />)}</div>}
       {!loading && !error && !cards.length && (
         <div className="rounded-3xl bg-surface p-6 text-center ring-1 ring-line">
           <p className="text-[18px] text-ink">Pas encore de nouvelles ici.</p>
-          <p className="mt-2 text-[16px] text-muted">Touchez « Chercher les nouvelles » en haut de l'écran.</p>
+          <p className="mt-2 text-[16px] text-muted">Touchez « Chercher les nouvelles » ci-dessus.</p>
         </div>
       )}
 

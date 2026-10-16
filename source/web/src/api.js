@@ -37,4 +37,6 @@ export const api = {
   refresh: (mode = 'manual', onProgress) => req(`/api/refresh?mode=${mode}`, { method: 'POST', onProgress }),
   setup: body => post('/api/setup', body),
   update: () => req('/api/update'),
+  shareCode: () => req('/api/share-code'),
+  importCode: code => post('/api/import-code', { code }),
 };

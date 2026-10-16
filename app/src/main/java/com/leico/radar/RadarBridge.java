@@ -133,6 +133,31 @@ public final class RadarBridge {
         if (hour >= 0 && hour <= 23) RadarApp.setDailyHour(ctx, hour);
     }
 
+    // ---------- Installer Radar chez un proche ----------
+    @JavascriptInterface
+    public String qrMatrix(String text) {
+        return KeyShare.qrMatrix(text);
+    }
+
+    /** Lecture d'un code QR ; le résultat revient par window.__radarScan(json). */
+    @JavascriptInterface
+    public void scanQr() {
+        if (activity == null) return;
+        main.post(() -> KeyShare.scan(activity, res -> main.post(() -> web.evaluateJavascript(
+                "window.__radarScan && window.__radarScan(" + JSONObject.quote(res) + ")", null))));
+    }
+
+    @JavascriptInterface
+    public void shareText(String text) {
+        if (activity == null) return;
+        main.post(() -> KeyShare.share(activity, text));
+    }
+
+    @JavascriptInterface
+    public String readClipboard() {
+        return KeyShare.clipboard(ctx);
+    }
+
     @JavascriptInterface
     public void done(String json) {
         if (done != null) done.onDone(json);

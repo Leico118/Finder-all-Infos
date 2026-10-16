@@ -10,8 +10,8 @@ android {
         applicationId = "com.leico.radar"
         minSdk = 30
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.1.0"
+        versionCode = 14
+        versionName = "1.1.3"
     }
 
     signingConfigs {
@@ -46,4 +46,7 @@ android {
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.work:work-runtime:2.10.0")
+    // Code QR : création (ZXing) et lecture avec le scanner de Google (sans autorisation caméra).
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }
