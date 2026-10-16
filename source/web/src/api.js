@@ -33,6 +33,7 @@ export const api = {
   topics: () => req('/api/topics'),
   addTopic: text => post('/api/topics', { text }),
   updateTopic: (id, body) => req(`/api/topics/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+  buildSheet: (id, body = {}) => post(`/api/topics/${encodeURIComponent(id)}/sheet`, body),
   deleteTopic: id => req(`/api/topics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   refresh: (mode = 'manual', onProgress) => req(`/api/refresh?mode=${mode}`, { method: 'POST', onProgress }),
   setup: body => post('/api/setup', body),

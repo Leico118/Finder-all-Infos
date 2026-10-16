@@ -97,7 +97,7 @@ export default function CardDetail({ id, onBack, onRead, simple = false }) {
           )}
 
           {card.specs?.length > 0 && (
-            <Section title="Caractéristiques concernées">
+            <Section title={type === 'general' ? 'Repères concernés' : 'Caractéristiques concernées'}>
               <ul className="divide-y divide-line">
                 {card.specs.map(s => (
                   <li key={s.key} className="flex items-start justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
@@ -109,7 +109,7 @@ export default function CardDetail({ id, onBack, onRead, simple = false }) {
                   </li>
                 ))}
               </ul>
-              <p className="mt-3 text-[11px] text-faint">Valeurs actuellement retenues dans la fiche technique.</p>
+              <p className="mt-3 text-[11px] text-faint">Valeurs actuellement retenues dans la fiche (onglet Fiches).</p>
             </Section>
           )}
 

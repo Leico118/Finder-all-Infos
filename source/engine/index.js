@@ -1,10 +1,10 @@
 // Moteur local de l'application : mêmes routes que l'ancienne API web, exécutées sur le téléphone.
 import { SCHEMA, SCHEMA_VERSION } from './schema.js';
 import { setFetch, http } from './net.js';
-import { tick, getMeta, setMeta, dayStart, loadTopics, purgeOrphans } from './pipeline.js';
-import { aiConfigured, callAI, callGroq, backupConfigured } from './ai.js';
+import { tick, getMeta, setMeta, dayStart, loadTopics, purgeOrphans, applySpecs } from './pipeline.js';
+import { aiConfigured, callAI, callGroq, backupConfigured, sheetFillSystem, sheetFillUser } from './ai.js';
 import { searchConfigured, tavily } from './websearch.js';
-import { DEFAULT_TOPIC, MAX_TOPICS, TOPIC_SYSTEM, topicUserPrompt, sanitizeConfig } from './topics.js';
+import { DEFAULT_TOPIC, MAX_TOPICS, TOPIC_SYSTEM, topicUserPrompt, sanitizeConfig, SHEET_SYSTEM, sheetUserPrompt, parseGroups } from './topics.js';
 import { SITE_FEEDS, topicFeeds } from './sources.js';
 import { importLegacy } from './legacy.js';
 
@@ -127,10 +127,13 @@ export function createEngine(platform) {
       unread: !card.read_at || card.read_at < card.updated_at });
   }
 
+  // Fiches : technique pour un produit, « repères » pour un sujet général ; tous les sujets en ont une (ou peuvent en avoir une).
   async function getSpecs(E, q) {
-    const topics = (await loadTopics(E)).filter(t => t.type === 'product');
-    const topic = topics.find(t => t.id === q.get('topic')) || topics[0];
+    const topics = await loadTopics(E);
+    const topic = topics.find(t => t.id === q.get('topic')) || topics.find(t => (t.config.spec_groups || []).length) || topics[0];
+    const list = topics.map(t => ({ id: t.id, name: t.name, short: t.config.short, type: t.type, has_sheet: (t.config.spec_groups || []).length > 0 }));
     if (!topic) return ok({ topics: [], topic: null, groups: [], known: 0, total: 0 });
+    const cardsN = (await E.DB.prepare('SELECT COUNT(*) AS n FROM cards WHERE topic_id = ?').bind(topic.id).first())?.n || 0;
     const { results: specs } = await E.DB.prepare('SELECT * FROM specs WHERE topic_id = ?').bind(topic.id).all();
     const { results: hist } = await E.DB.prepare(
       'SELECT key, value, reliability, note, accepted, at, card_id FROM spec_history WHERE topic_id = ? ORDER BY at DESC LIMIT 400').bind(topic.id).all();
@@ -148,8 +151,49 @@ export function createEngine(platform) {
     }));
     const total = groups.reduce((n, g) => n + g.items.length, 0);
     const known = groups.reduce((n, g) => n + g.items.filter(i => i.value).length, 0);
-    return ok({ topics: topics.map(t => ({ id: t.id, name: t.name, short: t.config.short })), topic: { id: topic.id, name: topic.name },
-      groups, known, total });
+    return ok({ topics: list, topic: { id: topic.id, name: topic.name, type: topic.type, cards: cardsN }, groups, known, total,
+      filled_at: Number(await getMeta(E, `sheet_fill_${topic.id}`)) || null });
+  }
+
+  // Crée la fiche d'un sujet qui n'en a pas (ou la refait), puis la remplit avec les actualités déjà trouvées.
+  async function buildSheet(E, id, body) {
+    const row = await E.DB.prepare('SELECT * FROM topics WHERE id = ?').bind(id).first();
+    if (!row) return fail('Sujet introuvable', 404);
+    if (!aiConfigured(E)) return fail("Ajoutez d'abord votre clé Gemini.");
+    const topic = { ...row, config: parse(row.config) || {} };
+    if (!(topic.config.spec_groups || []).length || body?.regenerate) {
+      let raw;
+      try { raw = await callAI({ ...E, aiTimeout: 45000 }, SHEET_SYSTEM, sheetUserPrompt(topic)); }
+      catch (e) { return fail(`L'IA n'a pas pu préparer la fiche : ${e.message}`, 502); }
+      const groups = parseGroups(raw?.spec_groups, topic.type);
+      if (!groups.length) return fail('L\'IA n\'a pas proposé de fiche exploitable, réessayez.', 502);
+      topic.config.spec_groups = groups;
+      await E.DB.prepare('UPDATE topics SET config = ?, updated_at = ? WHERE id = ?').bind(JSON.stringify(topic.config), Date.now(), id).run();
+    }
+    return fillSheet(E, topic);
+  }
+
+  async function fillSheet(E, topic) {
+    const { results: cards } = await E.DB.prepare(
+      `SELECT id, reliability, title, summary, detail, latest_at FROM cards WHERE topic_id = ? AND category = 'target' ORDER BY latest_at DESC LIMIT 40`)
+      .bind(topic.id).all();
+    let filled = 0;
+    if (cards?.length) {
+      let out;
+      try { out = await callAI({ ...E, aiTimeout: 60000 }, sheetFillSystem(topic), sheetFillUser(cards)); }
+      catch (e) { return fail(`Fiche créée, mais le remplissage a échoué : ${e.message}`, 502); }
+      const refToId = new Map(cards.map(c => [c.id, c.id]));
+      const byRef = new Map();
+      for (const c of cards) {
+        const { results: src } = await E.DB.prepare('SELECT url, source_name, published_at FROM card_sources WHERE card_id = ? ORDER BY published_at DESC LIMIT 1').bind(c.id).all();
+        byRef.set(c.id, src || []);
+      }
+      const before = (await E.DB.prepare('SELECT COUNT(*) AS n FROM specs WHERE topic_id = ?').bind(topic.id).first())?.n || 0;
+      await applySpecs(E, topic, out?.spec_updates, refToId, byRef, Date.now());
+      filled = ((await E.DB.prepare('SELECT COUNT(*) AS n FROM specs WHERE topic_id = ?').bind(topic.id).first())?.n || 0) - before;
+    }
+    await setMeta(E, `sheet_fill_${topic.id}`, String(Date.now()));
+    return ok({ ok: true, filled, cards: cards?.length || 0 });
   }
 
   async function getStatus(E) {
@@ -404,6 +448,7 @@ export function createEngine(platform) {
       if (method === 'POST' && p === '/api/topics') return await createTopic(E, body);
       if (method === 'PUT' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)$/))) return await updateTopic(E, m[1], body);
       if (method === 'DELETE' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)$/))) return await deleteTopic(E, m[1]);
+      if (method === 'POST' && (m = p.match(/^\/api\/topics\/([\w一-鿿-]+)\/sheet$/))) return await buildSheet(E, m[1], body);
       if (method === 'POST' && p === '/api/setup') return await setup(E, body);
       if (method === 'POST' && p === '/api/refresh') return await refresh(E, q, ctx);
       if (method === 'GET' && p === '/api/update') return await checkUpdate();

@@ -34,7 +34,7 @@ setTopicResponse(topicResponse = { name: 'Voitures BYD', short: 'BYD', type: 'ge
   web_queries: ['BYD new car', 'BYD électrique'], rivals: ['Tesla Model 3'], tech: false, spec_groups: [{ label: 'x', items: [{ key: 'a', label: 'b' }] }] });
 r = await api('POST', '/api/topics', { text: 'voiture BYD' });
 assert(r.status === 200 && r.data.topic.id === 'voitures-byd' && r.data.topic.type === 'general', 'sujet « voiture BYD » préparé par l\'IA');
-assert(r.data.topic.spec_groups.length === 0 && r.data.topic.rivals.length === 0, 'sujet général : ni fiche technique ni concurrents');
+assert(r.data.topic.spec_groups.length === 1 && r.data.topic.rivals.length === 0, 'sujet général : fiche repères gardée, pas de concurrents');
 assert((await api('POST', '/api/topics', { text: 'x' })).status === 400, 'texte trop court refusé');
 
 // 4. Première synchronisation (manuelle)
@@ -66,7 +66,7 @@ assert(cards.some(c => c.topic_id === 'voitures-byd' && c.category === 'target' 
 const lofic = bridge.db.prepare("SELECT COUNT(*) n FROM card_sources WHERE card_id = 'old-1'").get().n;
 assert(lofic >= 2, 'doublon : nouvel article LOFIC rattaché à la carte reprise');
 const byd = analysisPrompts.find(p => p.system.includes('Voitures BYD'));
-assert(byd && !byd.system.includes('CLÉS DE FICHE') && byd.system.includes('category vaut toujours "target"'), 'consignes IA adaptées au sujet général');
+assert(byd && byd.system.includes('CLÉS DE FICHE REPÈRES') && !byd.system.includes('FICHE TECHNIQUE') && byd.system.includes('category vaut toujours "target"'), 'consignes IA adaptées au sujet général (fiche repères)');
 const x10p = analysisPrompts.find(p => p.system.includes('OPPO Find X10 Ultra'));
 assert(x10p && x10p.system.includes('Find X10 Pro Max') && x10p.system.includes('camera_tele1'), 'consignes IA produit : exclusions et fiche technique');
 assert(bridge.db.prepare("SELECT COUNT(*) n FROM specs WHERE topic_id = 'voitures-byd'").get().n === 0, 'pas de fiche technique pour BYD');
@@ -108,6 +108,16 @@ assert(tx2.filter(b => X10Q.includes(b.query))[0].query === X10Q[15] && tx2.filt
 // 8. Modification et suppression d'un sujet
 r = await api('PUT', '/api/topics/voitures-byd', { match: 'BYD, 比亚迪, Denza', type: 'general' });
 assert(r.status === 200 && (await api('GET', '/api/topics')).data.topics.find(t => t.id === 'voitures-byd').match.includes('Denza'), 'modification des mots-clés');
+// Fiche repères d'un sujet général : créée après coup puis remplie avec les actualités déjà trouvées
+{
+  const before = (await api('GET', '/api/specs?topic=voitures-byd')).data;
+  const sh = await api('POST', '/api/topics/voitures-byd/sheet', { regenerate: true });
+  const after = (await api('GET', '/api/specs?topic=voitures-byd')).data;
+  const bat = after.groups.flatMap(g => g.items).find(i => i.key === 'battery');
+  assert(before.groups.length === 1 && sh.status === 200 && after.topic.type === 'general' && after.groups.length === 1 && bat?.value === '80 kWh' && after.known === 1,
+    `fiche repères refaite et remplie (${sh.data?.filled} valeur, clé inventée ignorée)`);
+  assert(after.topics.length >= 2 && after.topics.some(t => t.id === 'voitures-byd' && t.has_sheet), 'tous les sujets listés dans Fiches');
+}
 r = await api('DELETE', '/api/topics/voitures-byd');
 assert(r.status === 200 && bridge.db.prepare("SELECT COUNT(*) n FROM cards WHERE topic_id = 'voitures-byd'").get().n === 0, 'suppression d\'un sujet et de ses cartes');
 // Filtre « Non lus » : une carte lue pendant la consultation reste visible, pas les cartes lues avant

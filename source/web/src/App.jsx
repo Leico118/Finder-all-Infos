@@ -224,7 +224,7 @@ export default function App() {
   const unread = Object.values(data?.unread_by_topic || {}).reduce((a, b) => a + b, 0);
   const tabs = [
     { id: 'feed', hash: '#/', label: 'Actualités', Icon: IconNews, badge: unread },
-    ...(simple ? [] : [{ id: 'specs', hash: '#/fiche', label: 'Fiche technique', Icon: IconSpecs }]),
+    ...(simple ? [] : [{ id: 'specs', hash: '#/fiche', label: 'Fiches', Icon: IconSpecs }]),
     { id: 'settings', hash: '#/reglages', label: 'Réglages', Icon: IconSettings },
   ];
   const activeTab = route.view === 'card' ? 'feed' : route.view;
@@ -250,7 +250,7 @@ export default function App() {
         <KeySetup startAt={route.step} onFinish={() => { loadTopics(); load(); window.location.hash = '#/'; }} />
       )}
       {route.view === 'card' && <CardDetail id={route.id} onBack={back} onRead={() => load()} simple={simple} />}
-      {route.view === 'specs' && !simple && <Specs onOpenCard={id => go(`#/carte/${id}`)} topic={currentTopic?.type === 'product' ? topic : ''} />}
+      {route.view === 'specs' && !simple && <Specs onOpenCard={id => go(`#/carte/${id}`)} topic={topic} />}
       {route.view === 'settings' && (
         <Settings onRefresh={() => refresh()} refreshing={refreshing} refreshMsg={refreshMsg} progress={progress}
           onTopicsChanged={() => { loadTopics(); load(); }} focusTopics={route.topics} simple={simple} onModeChange={changeMode} />

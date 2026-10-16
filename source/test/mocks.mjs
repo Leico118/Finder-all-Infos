@@ -37,7 +37,12 @@ export async function fakeFetch(url, opts = {}) {
     if (!String(opts.headers['x-goog-api-key']).startsWith('AIzaGOOD')) return new Response('{"error":{"code":400,"message":"API key not valid"}}', { status: 400 });
     let out;
     if (user.startsWith('Réponds exactement')) out = { ok: true };
-    else if (user.includes("Sujet tapé par l'utilisateur")) {
+    else if (system.includes('Tu prépares la fiche')) {
+      out = { spec_groups: [{ label: 'Repères', items: [{ key: 'dernier_modele', label: 'Dernier modèle annoncé' }, { key: 'battery', label: 'Batterie' }] }] };
+    } else if (system.includes('Tu remplis la')) {
+      const first = user.match(/"id":"([^"]+)"/)?.[1];
+      out = { spec_updates: [{ key: 'battery', value: '80 kWh', reliability: 'official', ref: first }, { key: 'inventee', value: 'x', reliability: 'official', ref: first }] };
+    } else if (user.includes("Sujet tapé par l'utilisateur")) {
       calls.topicGen++;
       out = topicResponse;
     } else {

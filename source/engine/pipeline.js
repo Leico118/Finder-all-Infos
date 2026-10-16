@@ -403,10 +403,10 @@ async function applyAnalysis(env, topic, pending, cards, out, now, stats) {
          reason = 'non traité par l''IA' WHERE id = ?`).bind(it.id));
   }
   if (stmts.length) await DB.batch(stmts);
-  if (topic.type === 'product') await applySpecs(env, topic, out.spec_updates, refToId, byRef, now);
+  if (specKeys(topic).length) await applySpecs(env, topic, out.spec_updates, refToId, byRef, now);
 }
 
-async function applySpecs(env, topic, updates, refToId, byRef, now) {
+export async function applySpecs(env, topic, updates, refToId, byRef, now) {
   if (!Array.isArray(updates)) return;
   const keys = specKeys(topic);
   for (const u of updates) {

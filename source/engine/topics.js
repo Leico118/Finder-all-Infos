@@ -92,18 +92,24 @@ const arr = (v, max = 20, len = 120) => (Array.isArray(v) ? v : [])
 const slug = s => s.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
   .replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'sujet';
 
-export function sanitizeConfig(raw, fallbackName) {
-  const name = (typeof raw?.name === 'string' && raw.name.trim()) ? raw.name.trim().slice(0, 60) : fallbackName;
-  const type = raw?.type === 'product' ? 'product' : 'general';
-  const q = raw?.queries || {};
-  const groups = type === 'product' && Array.isArray(raw?.spec_groups) ? raw.spec_groups.slice(0, 10).map(g => ({
+// Rubriques de la fiche : techniques pour un produit (jusqu'à 10), « repères » pour un sujet général (jusqu'à 4).
+export function parseGroups(list, type) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, type === 'product' ? 10 : 4).map(g => ({
     label: String(g?.label || '').trim().slice(0, 40),
     items: (Array.isArray(g?.items) ? g.items : []).slice(0, 10).map(it => Array.isArray(it)
       ? [String(it[0] || ''), String(it[1] || '')]
       : [String(it?.key || ''), String(it?.label || '')])
       .map(([k, l]) => [slug(k).replace(/-/g, '_').slice(0, 30), l.trim().slice(0, 60)])
       .filter(([k, l]) => k && l),
-  })).filter(g => g.label && g.items.length) : [];
+  })).filter(g => g.label && g.items.length);
+}
+
+export function sanitizeConfig(raw, fallbackName) {
+  const name = (typeof raw?.name === 'string' && raw.name.trim()) ? raw.name.trim().slice(0, 60) : fallbackName;
+  const type = raw?.type === 'product' ? 'product' : 'general';
+  const q = raw?.queries || {};
+  const groups = parseGroups(raw?.spec_groups, type);
   const config = {
     short: (typeof raw?.short === 'string' && raw.short.trim()) ? raw.short.trim().slice(0, 30) : name,
     description: typeof raw?.description === 'string' ? raw.description.trim().slice(0, 240) : '',
@@ -132,6 +138,23 @@ Décide du type :
 - "general" : un sujet plus large (une marque entière, un secteur, une personne, un événement, un thème).
 N'invente pas de faits sur le sujet : tu prépares seulement les mots-clés et les recherches.`;
 
+const SHEET_RULE = `adaptée à ce sujet précis :
+- produit : fiche technique de 4 à 8 rubriques propres à ce type de produit (téléphone : écran, photo, performances, batterie, prix et sortie… ; appareil photo : capteur, autofocus, vidéo, objectifs compatibles, boîtier, prix et sortie… ; console : processeur, graphismes, stockage, manettes, jeux de lancement, prix et sortie… ; voiture : motorisation, batterie et autonomie, recharge, dimensions, équipements, prix et sortie) ;
+- sujet général : « fiche repères » de 2 à 4 rubriques, 3 à 6 lignes chacune : faits concrets, vérifiables et qui évoluent dans le temps (ex. marque automobile : dernier modèle annoncé, modèles vendus en Europe, prix d'appel, ventes récentes, usines ; auteur : dernier livre paru, date de sortie, éditeur, prochain livre annoncé, prix reçus ; assurance maladie : prime moyenne annoncée, hausse prévue, date d'entrée en vigueur, décisions récentes ; jeu vidéo : studio, plateformes, date de sortie, prix, dernière bande-annonce).
+Chaque ligne : une clé courte en snake_case et un libellé en français. Pas de valeurs : la fiche se remplit avec les actualités.`;
+
+// Fiche d'un sujet existant (créée après coup).
+export const SHEET_SYSTEM = `Tu prépares la fiche d'un sujet suivi dans une application de veille d'actualités.
+Tu réponds UNIQUEMENT par un objet JSON valide. Textes en français. Tu ne fournis aucune valeur, seulement les rubriques et les lignes.`;
+
+export function sheetUserPrompt(topic) {
+  return `Sujet : « ${topic.name} » (${topic.type === 'product' ? 'produit précis' : 'sujet général'})${topic.config?.description ? ` — ${topic.config.description}` : ''}
+
+Réponds avec ce JSON :
+{ "spec_groups": [ { "label": "Rubrique", "items": [ { "key": "identifiant_court", "label": "Ligne" } ] } ] }
+La fiche doit être ${SHEET_RULE}`;
+}
+
 export function topicUserPrompt(text) {
   const today = new Date().toISOString().slice(0, 10);
   return `Date du jour : ${today}
@@ -153,6 +176,6 @@ Réponds avec ce JSON :
   "tech": true,
   "spec_groups": [ { "label": "Rubrique", "items": [ { "key": "identifiant_court", "label": "Caractéristique" } ] } ]
 }
-"spec_groups" : uniquement pour un produit, 4 à 8 rubriques adaptées à ce type de produit (ex. pour une voiture : motorisation, batterie et autonomie, recharge, dimensions, équipements, prix et sortie) ; liste vide pour un sujet général.
+"spec_groups" : la fiche du sujet, ${SHEET_RULE}
 "tech" : true si le sujet relève de la technologie grand public (smartphones, informatique, consoles, objets connectés), sinon false.`;
 }

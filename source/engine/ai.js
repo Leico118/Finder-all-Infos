@@ -168,12 +168,15 @@ export function specKeys(topic) {
   return (topic.config?.spec_groups || []).flatMap(g => g.items.map(([k]) => k));
 }
 
+export const sheetName = topic => (topic.type === 'product' ? 'fiche technique' : 'fiche repères');
+
 export function analysisSystem(topic) {
   const c = topic.config || {};
   const product = topic.type === 'product';
+  const sheet = specKeys(topic).length > 0;
   const owner = c.owner || 'l\'organisation concernée';
   const exclude = c.exclude?.length ? ` Ignore les articles qui portent sur ${c.exclude.join(', ')} ou tout autre sujet voisin, SAUF s'ils contiennent une information explicite sur ${topic.name} ; dans ce cas ne retiens que cette partie.` : '';
-  const specDoc = product ? (c.spec_groups || []).map(g => `${g.label} : ${g.items.map(([k, l]) => `${k} (${l})`).join(', ')}`).join('\n') : '';
+  const specDoc = sheet ? (c.spec_groups || []).map(g => `${g.label} : ${g.items.map(([k, l]) => `${k} (${l})`).join(', ')}`).join('\n') : '';
   const leakers = c.leakers?.length ? ` (par ex. ${c.leakers.join(', ')})` : '';
   const rules = [
     `N'invente jamais rien. N'utilise que ce qui figure dans les articles fournis. Aucune valeur, date ou nom absent des textes ne doit apparaître. N'utilise pas tes connaissances préalables pour compléter. Si un extrait est trop vague pour être exploité, ignore l'article.`,
@@ -189,11 +192,11 @@ export function analysisSystem(topic) {
    Plusieurs médias qui reprennent la même information ne sont PAS des confirmations indépendantes : le niveau dépend de la source d'origine.`,
     `Déduplication sémantique : avant de créer une carte, compare le SENS de l'article aux cartes existantes (même information formulée autrement ou dans une autre langue = doublon). Si c'est la même information, rattache l'article à la carte existante (ref = son id). Si plusieurs articles du lot rapportent une même information nouvelle, donne-leur la même ref "new:1", "new:2"… Crée une nouvelle carte uniquement pour une information réellement distincte.`,
     `Mise à jour : pour une carte existante, ajoute-la dans "cards" avec updated=true SEULEMENT si les nouveaux articles apportent une précision, une confirmation officielle, une contradiction ou justifient un changement de fiabilité ; réécris alors title/summary/detail/technical complets et décris le changement dans change_note. Sinon, rattache simplement l'article sans l'ajouter dans "cards".`,
-    `Contradictions : si une information contredit une carte existante${product ? ' ou la fiche technique' : ''}, explique-le dans "contradiction" (sinon chaîne vide).`,
+    `Contradictions : si une information contredit une carte existante${sheet ? ` ou la ${sheetName(topic)}` : ''}, explique-le dans "contradiction" (sinon chaîne vide).`,
     `Dans les textes, distingue explicitement les faits (« selon … », « ${owner} a confirmé »), les hypothèses et les spéculations. Cite l'origine de l'information.`,
-    product
-      ? `Fiche technique : propose des spec_updates uniquement pour des valeurs explicitement indiquées dans les articles, avec les clés autorisées ci-dessous. Valeur concise.`
-      : `Pas de fiche technique pour ce sujet : spec_updates est toujours une liste vide et spec_keys une liste vide.`,
+    sheet
+      ? `${sheetName(topic)[0].toUpperCase()}${sheetName(topic).slice(1)} : propose des spec_updates uniquement pour des valeurs explicitement indiquées dans les articles, avec les clés autorisées ci-dessous. Valeur concise (quelques mots, avec la date si utile).`
+      : `Pas de fiche pour ce sujet : spec_updates est toujours une liste vide et spec_keys une liste vide.`,
     `importance : 3 = annonce officielle ou information majeure ; 2 = information notable ; 1 = détail mineur.`,
   ];
   return `Tu es l'analyste éditorial d'une application de veille consacrée à : ${topic.name}.
@@ -201,11 +204,12 @@ Tu reçois des articles bruts (titre, extrait, parfois début d'article ; toutes
 Tu réponds UNIQUEMENT par un objet JSON valide conforme au schéma fourni. Tout texte rédigé est en français clair et soigné.
 
 RÈGLES ABSOLUES
-${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}${product ? `\n\nCLÉS DE FICHE TECHNIQUE AUTORISÉES\n${specDoc}` : ''}`;
+${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}${sheet ? `\n\nCLÉS DE ${sheetName(topic).toUpperCase()} AUTORISÉES\n${specDoc}` : ''}`;
 }
 
 export function analysisUser(topic, { items, cards, specs }) {
   const product = topic.type === 'product';
+  const sheet = specKeys(topic).length > 0;
   const itemsTxt = items.map((it, i) => JSON.stringify({
     i, kind: it.kind, source: it.source_name, lang: it.lang,
     date: it.published_at ? new Date(it.published_at).toISOString().slice(0, 10) : null,
@@ -221,7 +225,7 @@ ${itemsTxt}
 
 CARTES EXISTANTES (les plus récentes)
 ${cardsTxt}
-${product ? `\nFICHE TECHNIQUE ACTUELLE\n${specsTxt}\n` : ''}
+${sheet ? `\n${sheetName(topic).toUpperCase()} ACTUELLE\n${specsTxt}\n` : ''}
 Réponds avec ce JSON exact :
 {
   "items": [ { "i": 0, "ref": "new:1 | <id d'une carte existante> | null", "ignore_reason": "raison courte si ref est null", "date": "AAAA-MM-JJ si l'article a date null et que sa date figure dans le texte, sinon null" } ],
@@ -243,7 +247,30 @@ Réponds avec ce JSON exact :
     "importance": 1${product ? `,
     "competitor": { "brand": "", "model": "", "why": "pourquoi cette nouveauté peut rivaliser avec ${topic.name}", "comparison": "comparaison factuelle avec la fiche ci-dessus ; si les données manquent, le dire" }` : ''}
   } ],
-  "spec_updates": [${product ? ' { "key": "…", "value": "…", "reliability": "rumor", "ref": "new:1 | <id existant>", "note": "" } ' : ''}]
+  "spec_updates": [${sheet ? ' { "key": "…", "value": "…", "reliability": "rumor", "ref": "new:1 | <id existant>", "note": "" } ' : ''}]
 }
 Chaque article doit figurer une fois dans "items". Les cartes "new:N" doivent toutes figurer dans "cards".`;
+}
+
+// ---------- Remplir une fiche à partir des actualités déjà trouvées ----------
+export function sheetFillSystem(topic) {
+  const c = topic.config || {};
+  const doc = (c.spec_groups || []).map(g => `${g.label} : ${g.items.map(([k, l]) => `${k} (${l})`).join(', ')}`).join('\n');
+  return `Tu remplis la ${sheetName(topic)} de « ${topic.name} » à partir d'actualités déjà vérifiées et résumées.
+Tu réponds UNIQUEMENT par un objet JSON valide. Valeurs en français, concises (quelques mots, avec la date si utile).
+N'invente rien : une ligne ne reçoit une valeur que si une actualité fournie l'indique explicitement ; sinon ne la mentionne pas.
+Si plusieurs actualités se contredisent, garde la plus fiable, puis la plus récente.
+Fiabilité de chaque valeur = celle de l'actualité d'où elle vient (official, reliable, rumor, unverified).
+
+LIGNES AUTORISÉES
+${doc}`;
+}
+
+export function sheetFillUser(cards) {
+  return `ACTUALITÉS (une par ligne, des plus récentes aux plus anciennes)
+${cards.map(c => JSON.stringify({ id: c.id, date: c.latest_at ? new Date(c.latest_at).toISOString().slice(0, 10) : null,
+    reliability: c.reliability, title: c.title, summary: c.summary, detail: (c.detail || '').slice(0, 900) })).join('\n')}
+
+Réponds avec ce JSON :
+{ "spec_updates": [ { "key": "clé autorisée", "value": "…", "reliability": "official | reliable | rumor | unverified", "ref": "<id de l'actualité>", "note": "" } ] }`;
 }
