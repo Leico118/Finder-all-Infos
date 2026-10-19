@@ -8,7 +8,7 @@ function QrCode({ text }) {
   if (!m?.rows) return null;
   const d = m.rows.flatMap((row, y) => [...row].map((c, x) => (c === '1' ? `M${x} ${y}h1v1h-1z` : ''))).join('');
   return (
-    <svg viewBox={`0 0 ${m.size} ${m.size}`} className="mx-auto block aspect-square w-full max-w-[260px] rounded-2xl bg-white" shapeRendering="crispEdges"
+    <svg viewBox={`0 0 ${m.size} ${m.size}`} className="mx-auto block aspect-square w-full max-w-[300px] rounded-2xl bg-white" shapeRendering="crispEdges"
       role="img" aria-label="Code QR Radar">
       <path d={d} fill="#000" />
     </svg>
@@ -16,35 +16,67 @@ function QrCode({ text }) {
 }
 
 // ---------- Côté téléphone déjà configuré ----------
-export function ShareKeys() {
+// Un seul code QR fait tout : scanné avec l'appareil photo, il ouvre Chrome et télécharge Radar ;
+// scanné ensuite depuis Radar (« Scanner le code d'un proche »), il configure les clés.
+// Les clés sont après le « # » du lien : cette partie n'est jamais envoyée à GitHub ni à aucun site.
+export const APP_URL = 'https://github.com/Leico118/Finder-all-Infos/releases/latest/download/Radar.apk';
+
+export function ShareApp({ canShare = false }) {
+  const [open, setOpen] = useState(false);
+  const [withKeys, setWithKeys] = useState(canShare);
   const [code, setCode] = useState(null);
   const [msg, setMsg] = useState('');
-  const show = async () => {
-    try { setCode(await api.shareCode()); setMsg(''); } catch (e) { setMsg(e.message); }
-  };
-  const message = c => `Code pour configurer Radar :\n${c}\n\nCopie ce message en entier, puis ouvre Radar : il le trouvera tout seul.`;
+  useEffect(() => { setWithKeys(canShare); }, [canShare]);
+  useEffect(() => {
+    if (!open || !withKeys || code) return;
+    api.shareCode().then(c => { setCode(c); setMsg(''); }).catch(e => { setMsg(e.message); setWithKeys(false); });
+  }, [open, withKeys]);
+  const keys = withKeys && code;
+  const qrText = keys ? `${APP_URL}#${code.code}` : APP_URL;
+  const message = keys
+    ? `Pour installer Radar, ouvre ce lien sur ton téléphone Android :\n${APP_URL}\n\nUne fois Radar installé, copie ce message en entier puis ouvre Radar : il se configurera tout seul.\n${code.code}`
+    : `Pour installer Radar, ouvre ce lien sur ton téléphone Android :\n${APP_URL}`;
+
   return (
     <section className="rounded-3xl bg-surface p-5 ring-1 ring-line animate-rise">
       <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-accent/90">Installer Radar chez un proche</h2>
-      {!code ? (
+      {!open ? (
         <>
           <p className="text-xs leading-relaxed text-muted">
-            Évite à un proche de créer ses propres clés : son Radar se configure en scannant un code affiché ici, ou à partir d'un message.
+            Votre proche scanne un code avec l'appareil photo de son téléphone : Chrome s'ouvre et télécharge Radar.{canShare ? ' Le même code configure ensuite ses clés.' : ''}
           </p>
-          <button onClick={show} className="mt-3 w-full rounded-2xl bg-ink px-4 py-2.5 text-sm font-medium text-bg active:scale-[0.98]">Afficher mon code</button>
+          <button onClick={() => setOpen(true)} className="mt-3 w-full rounded-2xl bg-ink px-4 py-2.5 text-sm font-medium text-bg active:scale-[0.98]">Afficher le code QR</button>
         </>
       ) : (
         <div className="space-y-3 animate-rise">
-          <p className="text-sm text-ink">Sur le téléphone du proche, dans Radar : <b>« Scanner le code d'un proche »</b>.</p>
-          <QrCode text={code.code} />
+          {withKeys && !code ? <div className="mx-auto aspect-square w-full max-w-[260px] animate-pulse rounded-2xl bg-surface-2" /> : <QrCode text={qrText} />}
+          <ol className="space-y-2 text-sm leading-snug text-ink/90">
+            <li className="flex gap-2.5"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-bg">1</span>
+              <span>Votre proche ouvre l'<b>appareil photo</b> et vise le code, puis touche le lien qui apparaît : Radar se télécharge dans Chrome.</span></li>
+            <li className="flex gap-2.5"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-bg">2</span>
+              <span>Il touche <b>« Ouvrir »</b> à la fin du téléchargement, puis <b>« Installer »</b>. Si Android le demande, il autorise Chrome à installer des applications.</span></li>
+            {keys && <li className="flex gap-2.5"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent text-[11px] font-bold text-bg">3</span>
+              <span>Dans Radar, il touche <b>« Scanner le code d'un proche »</b> et scanne ce même code : c'est configuré.</span></li>}
+          </ol>
+          {canShare && (
+            <label className="flex items-center justify-between gap-3 rounded-2xl bg-surface-2 px-4 py-3 ring-1 ring-line">
+              <span className="min-w-0">
+                <span className="block text-sm text-ink">Inclure mes clés</span>
+                <span className="block text-[11px] leading-snug text-muted">{withKeys ? 'Votre proche n\'aura rien à configurer.' : 'Votre proche créera ses propres clés.'}</span>
+              </span>
+              <input type="checkbox" checked={withKeys} onChange={e => setWithKeys(e.target.checked)} className="h-5 w-5 shrink-0 accent-[var(--color-accent)]" />
+            </label>
+          )}
           <div className="flex gap-2">
-            <button onClick={() => device.shareText(message(code.code))} className="flex-1 rounded-2xl bg-ink px-4 py-2.5 text-sm font-medium text-bg">Envoyer par message</button>
-            <button onClick={() => setCode(null)} className="rounded-2xl bg-surface-2 px-4 py-2.5 text-sm text-ink ring-1 ring-line">Masquer</button>
+            <button onClick={() => device.shareText(message)} disabled={withKeys && !code} className="flex-1 rounded-2xl bg-ink px-4 py-2.5 text-sm font-medium text-bg disabled:opacity-50">Envoyer par message</button>
+            <button onClick={() => setOpen(false)} className="rounded-2xl bg-surface-2 px-4 py-2.5 text-sm text-ink ring-1 ring-line">Masquer</button>
           </div>
-          <p className="text-[11px] leading-relaxed text-faint">
-            Ce code contient vos clés ({['Gemini', code.search && 'Tavily', code.backup && 'Groq'].filter(Boolean).join(', ')}) : votre proche utilisera vos quotas gratuits, partagés entre vos deux téléphones.
-            Ne le donnez qu'à des personnes de confiance.
-          </p>
+          {keys && (
+            <p className="text-[11px] leading-relaxed text-faint">
+              Ce code contient vos clés ({['Gemini', code.search && 'Tavily', code.backup && 'Groq'].filter(Boolean).join(', ')}) : votre proche utilisera vos quotas gratuits, partagés entre vos deux téléphones, et ne pourra pas les transmettre à son tour depuis Radar.
+              Ne le montrez qu'à des personnes de confiance.
+            </p>
+          )}
         </div>
       )}
       {msg && <p className="mt-2 text-xs text-red-300">{msg}</p>}

@@ -8,7 +8,7 @@ import { IconChevron } from './Icons.jsx';
 import { formatDateTime, timeAgo } from '../util.js';
 import Topics from './Topics.jsx';
 import { BigButton } from './Simple.jsx';
-import { ShareKeys, ReceiveKeys } from './KeyTransfer.jsx';
+import { ShareApp, ReceiveKeys } from './KeyTransfer.jsx';
 import ThemePicker from './ThemePicker.jsx';
 import { KEY_STEPS } from './KeySetup.jsx';
 
@@ -330,7 +330,7 @@ export default function Settings({ onRefresh, refreshing, refreshMsg, progress, 
         )}
 
         {status && <KeysBlock status={status} />}
-        {isNative() && status?.can_share && <ShareKeys />}
+        {isNative() && status && <ShareApp canShare={!!status.can_share} />}
 
         {isNative() && dev && (
           <Block title="Fonctionnement en arrière-plan" highlight={!dev.batteryExempt}>

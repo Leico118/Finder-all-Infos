@@ -144,9 +144,9 @@ const sc = await api.shareCode();
 assert(/^RADAR1:[A-Za-z0-9_-]+$/.test(sc.code) && sc.search && sc.backup, 'code de partage créé (clés Gemini, Tavily et Groq)');
 b.db.prepare("DELETE FROM meta WHERE key IN ('cfg_gemini_key','cfg_tavily_key','cfg_groq_key')").run();
 assert(!(await api.status()).ai.configured, 'clés effacées (nouveau téléphone simulé)');
-const imp = await api.importCode(`Code pour configurer Radar :\n${sc.code}\n\nCopie ce message…`);
+const imp = await api.importCode(`https://github.com/Leico118/Finder-all-Infos/releases/latest/download/Radar.apk#${sc.code}`);   // QR scanné depuis Radar
 const stI = await api.status();
-assert(imp.ai_ok && imp.search_ok && imp.backup_ok && stI.ai.configured && stI.search.configured && stI.ai.backup, 'code importé depuis un message : les trois clés installées');
+assert(imp.ai_ok && imp.search_ok && imp.backup_ok && stI.ai.configured && stI.search.configured && stI.ai.backup, 'code QR (lien de téléchargement + clés) importé : les trois clés installées');
 assert(stI.keys_received.gemini && !stI.can_share, 'clés reçues marquées comme telles');
 let reshare; try { await api.shareCode(); } catch (e) { reshare = e; }
 assert(reshare?.status === 403, 'clés reçues d\'un proche : impossible de les partager à nouveau');
